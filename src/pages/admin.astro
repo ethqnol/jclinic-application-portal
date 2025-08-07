@@ -1,0 +1,213 @@
+---
+import { getSession, isAdmin } from '../lib/auth';
+
+const session = await getSession(Astro);
+
+if (!session) {
+  return Astro.redirect('/');
+}
+
+const db = Astro.locals.runtime?.env.DB;
+if (!db) {
+  return new Response('Database not available', { status: 500 });
+}
+
+// Check if user is admin
+const userIsAdmin = await isAdmin(session.user.email, db);
+if (!userIsAdmin) {
+  return new Response('Unauthorized', { status: 403 });
+}
+
+// Get submitted applications with user data (ONLY submitted, no drafts)
+const applications = await db.prepare(`
+  SELECT 
+    a.id,
+    a.essay_one,
+    a.essay_two,
+    a.experience_data,
+    a.submitted_at,
+    a.is_draft,
+    u.name,
+    u.email
+  FROM applications a
+  JOIN users u ON a.user_id = u.id
+  WHERE a.is_draft = 0
+  ORDER BY a.submitted_at DESC
+`).all();
+
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Admin Dashboard - Application Portal" session={session}>
+	<main class="main-content">
+		<div class="admin-section">
+			<div class="container">
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+				<h2>Applications ({applications.results?.length || 0})</h2>
+				<div style="display: flex; gap: 1rem;">
+					<a href="/api/export-csv" class="btn btn-secondary">
+						Export to CSV
+					</a>
+					<button id="wipe-database-btn" class="btn" style="background: linear-gradient(135deg, var(--error-color) 0%, #b91c1c 100%); color: white;">
+						⚠️ Wipe Database
+					</button>
+				</div>
+			</div>
+
+			{applications.results && applications.results.length > 0 ? (
+				<div class="space-y-6">
+					{applications.results.map((app: any) => {
+						const experienceData = JSON.parse(app.experience_data);
+						return (
+							<div class="card">
+								<div class="border-b border-gray-200 pb-4 mb-4">
+									<div class="flex justify-between items-start">
+										<div>
+											<h3 class="text-lg font-semibold text-gray-900">{app.name}</h3>
+											<p class="text-gray-600">{app.email}</p>
+										</div>
+										<div class="text-right">
+											<p class="text-sm text-gray-500">Application #{app.id}</p>
+											<p class="text-sm text-gray-500">
+												Submitted: {new Date(app.submitted_at).toLocaleDateString()}
+											</p>
+										</div>
+									</div>
+								</div>
+
+								<div class="grid md:grid-cols-2 gap-6">
+									<div>
+										<h4 class="font-medium text-gray-900 mb-2">Essay 1: Background</h4>
+										<div class="bg-gray-50 p-3 rounded text-sm text-gray-700 max-h-32 overflow-y-auto">
+											{app.essay_one.substring(0, 300)}{app.essay_one.length > 300 ? '...' : ''}
+										</div>
+									</div>
+
+									<div>
+										<h4 class="font-medium text-gray-900 mb-2">Essay 2: Interest</h4>
+										<div class="bg-gray-50 p-3 rounded text-sm text-gray-700 max-h-32 overflow-y-auto">
+											{app.essay_two.substring(0, 300)}{app.essay_two.length > 300 ? '...' : ''}
+										</div>
+									</div>
+								</div>
+
+								<div class="mt-4 grid md:grid-cols-3 gap-4 text-sm">
+									<div>
+										<span class="font-medium">Programming:</span> {experienceData.programming_experience}
+									</div>
+									<div>
+										<span class="font-medium">Languages:</span> {experienceData.languages.join(', ') || 'None'}
+									</div>
+									<div>
+										<span class="font-medium">Research:</span> {experienceData.research_experience}
+									</div>
+								</div>
+
+								<div class="mt-2 grid md:grid-cols-2 gap-4 text-sm">
+									<div>
+										<span class="font-medium">Grade Level:</span> {experienceData.grade_level}
+									</div>
+								</div>
+
+								<div class="mt-4">
+									<h4 class="font-medium text-gray-900 mb-2">Clubs & Activities:</h4>
+									<p class="text-sm text-gray-700 bg-gray-50 p-3 rounded">
+										{experienceData.clubs_activities}
+									</p>
+								</div>
+
+								<div class="mt-4">
+									<h4 class="font-medium text-gray-900 mb-2">Final Thoughts:</h4>
+									<p class="text-sm text-gray-700 bg-gray-50 p-3 rounded">
+										{experienceData.final_thoughts}
+									</p>
+								</div>
+
+
+								<div id={`full-view-${app.id}`} class="hidden mt-4 space-y-4">
+									<div>
+										<h4 class="font-medium text-gray-900 mb-2">Complete Essay 1:</h4>
+										<div class="bg-gray-50 p-4 rounded text-sm text-gray-700 whitespace-pre-wrap">
+											{app.essay_one}
+										</div>
+									</div>
+									<div>
+										<h4 class="font-medium text-gray-900 mb-2">Complete Essay 2:</h4>
+										<div class="bg-gray-50 p-4 rounded text-sm text-gray-700 whitespace-pre-wrap">
+											{app.essay_two}
+										</div>
+									</div>
+								</div>
+							</div>
+						);
+					})}
+				</div>
+			) : (
+				<div class="text-center py-12">
+					<div class="card">
+						<p style="color: var(--gray-500); font-size: 1.125rem;">No applications submitted yet.</p>
+					</div>
+				</div>
+			)}
+		</div>
+
+		<script>
+			function toggleFullView(id) {
+				const element = document.getElementById(`full-view-${id}`);
+				element.classList.toggle('hidden');
+			}
+
+			document.addEventListener('DOMContentLoaded', function() {
+				const wipeBtn = document.getElementById('wipe-database-btn');
+				if (wipeBtn) {
+					wipeBtn.addEventListener('click', async function() {
+						// First confirmation
+						if (!confirm('⚠️ WARNING: This will permanently delete ALL applications and user data!\n\nThis action cannot be undone. Are you absolutely sure?')) {
+							return;
+						}
+
+						// Second confirmation with typing requirement
+						const confirmText = prompt('To confirm, type exactly: WIPE_ALL_DATA');
+						if (confirmText !== 'WIPE_ALL_DATA') {
+							alert('Database wipe cancelled - confirmation text did not match.');
+							return;
+						}
+
+						// Third confirmation
+						if (!confirm('FINAL WARNING: You are about to delete ALL data in the database.\n\nThis includes:\n- All applications (drafts and submitted)\n- All user accounts (except admins)\n\nThis cannot be undone. Proceed?')) {
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Wiping...';
+
+						try {
+							const formData = new FormData();
+							formData.append('confirmationCode', 'WIPE_ALL_DATA');
+
+							const response = await fetch('/api/admin/wipe-database', {
+								method: 'POST',
+								body: formData
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ Database wiped successfully!\n\nDeleted:\n- ${result.deleted.applications} applications\n- ${result.deleted.users} users`);
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error wiping database. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+						}
+					});
+				}
+			});
+		</script>
+	</main>
+</Layout>

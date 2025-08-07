@@ -1,0 +1,23 @@
+{
+  "name": "application-portal",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro check && astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "deploy": "wrangler pages deploy ./dist",
+    "db:init": "wrangler d1 execute application-portal-db --file=./schema.sql",
+    "db:create": "wrangler d1 create application-portal-db"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^12.6.2",
+    "@astrojs/tailwind": "^6.0.2",
+    "@auth/core": "^0.37.4",
+    "astro": "^5.12.8",
+    "auth-astro": "^4.2.0",
+    "tailwindcss": "^3.4.17"
+  }
+}

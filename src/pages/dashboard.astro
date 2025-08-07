@@ -1,0 +1,100 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getSession } from '../lib/auth';
+
+const session = await getSession(Astro);
+
+if (!session) {
+  return Astro.redirect('/');
+}
+
+// Check if user has already submitted an application
+const db = Astro.locals.runtime?.env.DB;
+let existingApplication = null;
+
+if (db) {
+  existingApplication = await db.prepare('SELECT * FROM applications WHERE user_id = ?')
+    .bind(session.user.id)
+    .first();
+}
+---
+
+<Layout title="Dashboard - Application Portal" session={session}>
+	<main class="main-content">
+		<div class="dashboard-section">
+			<div class="container">
+				{existingApplication && !existingApplication.is_draft ? (
+				<div class="max-w-2xl mx-auto">
+					<div class="alert alert-success">
+						<h2 style="color: #16a34a; margin-bottom: 1rem;">Application Submitted!</h2>
+						<p style="color: #16a34a; margin-bottom: 1rem;">
+							Thank you for submitting your application. We have received your submission on {new Date(existingApplication.submitted_at).toLocaleDateString()}.
+						</p>
+						<p style="color: #16a34a;">
+							We will review your application and get back to you soon.
+						</p>
+					</div>
+				</div>
+			) : existingApplication && existingApplication.is_draft ? (
+				<div class="max-w-2xl mx-auto">
+					<div class="card">
+						<h2>Draft Application Saved</h2>
+						<p style="margin-bottom: 1.5rem;">
+							You have a saved draft application. You can continue working on it or start fresh.
+						</p>
+						<p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 2rem;">
+							Last updated: {new Date(existingApplication.last_updated).toLocaleString()}
+						</p>
+						<div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+							<a href="/application" class="btn btn-primary">
+								Continue Application
+							</a>
+							<button id="delete-draft-btn" class="btn btn-secondary">
+								Start Fresh
+							</button>
+						</div>
+					</div>
+				</div>
+			) : (
+				<div class="max-w-2xl mx-auto">
+					<div class="card">
+						<h2>Welcome to the Application Portal</h2>
+						<p style="margin-bottom: 2rem;">
+							Ready to apply for our summer program? Click the button below to get started. Don't worry - you can save your progress as a draft at any time.
+						</p>
+						<a href="/application" class="btn btn-primary">
+							Start Application
+						</a>
+					</div>
+				</div>
+				)}
+			</div>
+		</div>
+
+		<script>
+			document.addEventListener('DOMContentLoaded', function() {
+				const deleteBtn = document.getElementById('delete-draft-btn');
+				if (deleteBtn) {
+					deleteBtn.addEventListener('click', async function() {
+						if (confirm('Are you sure you want to delete your saved draft? This action cannot be undone.')) {
+							try {
+								const response = await fetch('/api/delete-draft', {
+									method: 'POST'
+								});
+
+								if (response.ok) {
+									location.reload();
+								} else {
+									const result = await response.json();
+									alert('Error deleting draft: ' + (result.error || 'Unknown error'));
+								}
+							} catch (error) {
+								alert('Error deleting draft. Please try again.');
+							}
+						}
+					});
+				}
+			});
+		</script>
+	</main>
+</Layout>

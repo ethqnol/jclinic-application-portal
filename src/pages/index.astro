@@ -1,0 +1,83 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getSession } from '../lib/auth';
+
+const session = await getSession(Astro);
+
+// Check for error parameters
+const error = Astro.url.searchParams.get('error');
+const errorMessages = {
+  'no_code': 'No authorization code received from Google',
+  'token_error': 'Failed to exchange authorization code for access token',
+  'auth_failed': 'Authentication failed',
+  'missing_credentials': 'OAuth credentials not configured',
+  'missing_client_id': 'Google Client ID not found',
+  'db_error': 'Database connection failed'
+};
+---
+
+<Layout title="MIT Jameel Clinic Summer Bootcamp Application Portal" session={session}>
+	<main class="main-content">
+		<div class="hero-section">
+			<div class="container">
+				<div class="hero-content">
+					<div class="hero-badge">
+						<span class="badge-text">Applications Open</span>
+					</div>
+					<h1 class="hero-title">MIT Jameel Clinic Summer Bootcamp 2026</h1>
+					<p class="hero-description">
+						Join our intensive summer program focused on AI for healthcare innovation!
+					</p>
+				
+					{error && (
+						<div class="alert alert-error">
+							<strong>Error:</strong> {errorMessages[error] || 'An unknown error occurred'}
+						</div>
+					)}
+					
+					{session ? (
+						<div class="auth-section">
+							<div class="welcome-card">
+								<div class="welcome-icon">
+									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--success-color)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+									</svg>
+								</div>
+								<h3 class="welcome-title">Welcome back, {session.user.name}!</h3>
+								<p class="welcome-text">Ready to continue with your application?</p>
+								<div class="welcome-actions">
+									<a href="/dashboard" class="btn btn-primary">
+										Go to Dashboard
+									</a>
+									<form method="POST" action="/api/auth/logout">
+										<button type="submit" class="btn btn-secondary">
+											Logout
+										</button>
+									</form>
+								</div>
+							</div>
+						</div>
+					) : (
+						<div class="auth-section">
+							<div class="login-card">
+								<h3 class="login-title">Begin Your Application</h3>
+								<p class="login-description">
+									Sign in with your Google account to start your application for our summer bootcamp program.
+								</p>
+								<a href="/api/auth/google" class="btn-google">
+									Sign in with Google
+								</a>
+								<p class="login-security">
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--gray-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+									</svg>
+									Secure authentication powered by Google
+								</p>
+							</div>
+						</div>
+					)}
+				</div>
+			</div>
+		</div>
+	</main>
+</Layout>

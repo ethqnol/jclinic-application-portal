@@ -1,0 +1,280 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getSession } from '../lib/auth';
+
+const session = await getSession(Astro);
+
+if (!session) {
+  return Astro.redirect('/');
+}
+
+// Check if user has already submitted an application or has a draft
+const db = Astro.locals.runtime?.env.DB;
+let existingApplication = null;
+
+if (db) {
+  existingApplication = await db.prepare('SELECT * FROM applications WHERE user_id = ?')
+    .bind(session.user.id)
+    .first();
+}
+
+if (existingApplication && !existingApplication.is_draft) {
+  return Astro.redirect('/dashboard');
+}
+
+// Parse existing draft data if available
+let draftData = null;
+if (existingApplication && existingApplication.is_draft) {
+  try {
+    draftData = JSON.parse(existingApplication.experience_data || '{}');
+  } catch (e) {
+    draftData = {};
+  }
+}
+---
+
+<Layout title="Application Form - Application Portal" session={session}>
+	<main class="main-content">
+		<div class="application-section">
+			<div class="container">
+			<div class="max-w-4xl mx-auto">
+				<h2>Application Form</h2>
+				
+				<form method="POST" action="/api/submit-application">
+					<!-- Essay Questions -->
+					<div class="card">
+						<h3>Essay Questions</h3>
+						
+						<div class="form-group">
+							<label for="essay_one">
+								Essay 1: Tell us about yourself, your interests in school, and why you want to participate in this summer program (500-750 words)
+							</label>
+							<textarea 
+								id="essay_one" 
+								name="essay_one" 
+								rows="10"
+								required
+								maxlength="5000"
+								placeholder="Write your response here...">{existingApplication ? existingApplication.essay_one || '' : ''}</textarea>
+							<p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+								Character count: <span id="essay-one-count">0</span>/5000
+							</p>
+						</div>
+
+						<div class="form-group">
+							<label for="essay_two">
+								Essay 2: What are your future goals and how do you think this summer program will help you explore potential career paths? (500-750 words)
+							</label>
+							<textarea 
+								id="essay_two" 
+								name="essay_two" 
+								rows="10"
+								required
+								maxlength="5000"
+								placeholder="Write your response here...">{existingApplication ? existingApplication.essay_two || '' : ''}</textarea>
+							<p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+								Character count: <span id="essay-two-count">0</span>/5000
+							</p>
+						</div>
+					</div>
+
+					<!-- Short Answer Questions -->
+					<div class="card">
+						<h3>Additional Questions</h3>
+						
+						<div class="form-group">
+							<label for="programming_experience">
+								Do you have programming experience?
+							</label>
+							<select id="programming_experience" name="programming_experience" required>
+								<option value="">Select an option</option>
+								<option value="none" selected={draftData?.programming_experience === 'none'}>No experience</option>
+								<option value="beginner" selected={draftData?.programming_experience === 'beginner'}>Beginner</option>
+								<option value="intermediate" selected={draftData?.programming_experience === 'intermediate'}>Intermediate</option>
+								<option value="advanced" selected={draftData?.programming_experience === 'advanced'}>Advanced</option>
+							</select>
+						</div>
+
+						<div class="form-group">
+							<label for="languages">
+								Which programming languages are you familiar with? (Select all that apply)
+							</label>
+							<div class="checkbox-grid">
+								{['JavaScript', 'Python', 'Java', 'C++', 'Go', 'Rust', 'TypeScript', 'PHP', 'Other'].map((lang) => (
+									<div class="checkbox-item">
+										<input type="checkbox" name="languages" value={lang} checked={draftData?.languages?.includes(lang)} />
+										<span>{lang}</span>
+									</div>
+								))}
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label>Do you have research experience?</label>
+							<div style="margin-top: 0.5rem;">
+								<div class="radio-item" style="margin-bottom: 0.5rem;">
+									<input type="radio" name="research_experience" value="yes" checked={draftData?.research_experience === 'yes'} required />
+									<span>Yes, I have conducted research before</span>
+								</div>
+								<div class="radio-item" style="margin-bottom: 0.5rem;">
+									<input type="radio" name="research_experience" value="coursework" checked={draftData?.research_experience === 'coursework'} required />
+									<span>Only through coursework/class projects</span>
+								</div>
+								<div class="radio-item">
+									<input type="radio" name="research_experience" value="no" checked={draftData?.research_experience === 'no'} required />
+									<span>No, but I'm eager to learn</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label for="grade_level">
+								What grade are you entering?
+							</label>
+							<select id="grade_level" name="grade_level" required>
+								<option value="">Select your grade</option>
+								<option value="9th" selected={draftData?.grade_level === '9th'}>9th Grade (Freshman)</option>
+								<option value="10th" selected={draftData?.grade_level === '10th'}>10th Grade (Sophomore)</option>
+								<option value="11th" selected={draftData?.grade_level === '11th'}>11th Grade (Junior)</option>
+								<option value="12th" selected={draftData?.grade_level === '12th'}>12th Grade (Senior)</option>
+							</select>
+						</div>
+
+
+						<div class="form-group">
+							<label for="clubs_activities">
+								List your school clubs, activities, sports, and any leadership positions
+							</label>
+							<textarea 
+								id="clubs_activities" 
+								name="clubs_activities" 
+								rows="4"
+								maxlength="1000"
+								required
+								placeholder="e.g., Student Council, Drama Club, Basketball Team, Debate Team Captain, Volunteer Work, etc.">{draftData?.clubs_activities || ''}</textarea>
+						</div>
+
+						<div class="form-group">
+							<label for="final_thoughts">
+								Is there anything else you'd like to tell us that is not already covered?
+							</label>
+							<textarea 
+								id="final_thoughts" 
+								name="final_thoughts" 
+								rows="5"
+								maxlength="1500"
+								required
+								placeholder="Share any additional thoughts, experiences, or information you feel would be valuable for your application...">{draftData?.final_thoughts || ''}</textarea>
+						</div>
+					</div>
+
+					<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2rem;">
+						<div style="display: flex; align-items: center; gap: 1rem;">
+							<button type="button" id="save-draft-btn" class="btn btn-secondary" style="padding: 1rem 1.5rem;">
+								Save Draft
+							</button>
+							<a href="/dashboard" style="color: #6b7280; text-decoration: underline;">← Back to Dashboard</a>
+						</div>
+						<button type="submit" class="btn btn-primary" style="padding: 1rem 2rem;">
+							Submit Application
+						</button>
+					</div>
+					<div id="save-status" style="margin-top: 1rem; text-align: center; display: none;"></div>
+				</form>
+			</div>
+		</div>
+
+		<script define:vars={{draftData}}>
+			// Draft data from server
+			console.log('Draft data loaded:', draftData);
+
+			// Character counters for essays
+			function updateCharacterCount() {
+				const essayOne = document.getElementById('essay_one');
+				const essayTwo = document.getElementById('essay_two');
+				document.getElementById('essay-one-count').textContent = essayOne.value.length;
+				document.getElementById('essay-two-count').textContent = essayTwo.value.length;
+			}
+
+			// Initialize character counts on page load
+			updateCharacterCount();
+
+			// Debug current form state after page load
+			setTimeout(() => {
+				console.log('Form state after load:', {
+					programmingSelect: document.getElementById('programming_experience'),
+					programmingValue: document.getElementById('programming_experience')?.value,
+					programmingSelectedIndex: document.getElementById('programming_experience')?.selectedIndex,
+					gradeSelect: document.getElementById('grade_level'),
+					gradeValue: document.getElementById('grade_level')?.value,
+					gradeSelectedIndex: document.getElementById('grade_level')?.selectedIndex
+				});
+			}, 100);
+
+			document.getElementById('essay_one').addEventListener('input', function() {
+				document.getElementById('essay-one-count').textContent = this.value.length;
+			});
+
+			document.getElementById('essay_two').addEventListener('input', function() {
+				document.getElementById('essay-two-count').textContent = this.value.length;
+			});
+
+			// Save draft functionality
+			document.getElementById('save-draft-btn').addEventListener('click', async function() {
+				const saveBtn = this;
+				const originalText = saveBtn.textContent;
+				const statusDiv = document.getElementById('save-status');
+
+				// Disable button and show loading state
+				saveBtn.disabled = true;
+				saveBtn.textContent = 'Saving...';
+
+				try {
+					// Get form data - target the application form specifically
+					const form = document.querySelector('form[action="/api/submit-application"]');
+					
+					if (!form) {
+						throw new Error('Could not find the application form');
+					}
+					
+					// Debug: Check actual DOM values before FormData creation
+					console.log('DOM values before FormData:', {
+						programming: document.getElementById('programming_experience')?.value || 'EMPTY',
+						gradeLevel: document.getElementById('grade_level')?.value || 'EMPTY',
+						researchChecked: document.querySelector('input[name="research_experience"]:checked')?.value || 'NONE_CHECKED'
+					});
+					
+					const formData = new FormData(form);
+
+					// Send to save-draft endpoint
+					const response = await fetch('/api/save-draft', {
+						method: 'POST',
+						body: formData
+					});
+
+					const result = await response.json();
+
+					if (response.ok) {
+						statusDiv.style.display = 'block';
+						statusDiv.innerHTML = '<div class="alert alert-success">Draft saved successfully!</div>';
+						setTimeout(() => {
+							statusDiv.style.display = 'none';
+						}, 3000);
+					} else {
+						throw new Error(result.error || 'Failed to save draft');
+					}
+				} catch (error) {
+					statusDiv.style.display = 'block';
+					statusDiv.innerHTML = '<div class="alert alert-error">Error saving draft: ' + error.message + '</div>';
+					setTimeout(() => {
+						statusDiv.style.display = 'none';
+					}, 5000);
+				} finally {
+					// Re-enable button
+					saveBtn.disabled = false;
+					saveBtn.textContent = originalText;
+				}
+			});
+		</script>
+	</main>
+</Layout>
