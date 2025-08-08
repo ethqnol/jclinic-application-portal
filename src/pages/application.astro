@@ -101,10 +101,15 @@ if (existingApplication && existingApplication.is_draft) {
 							</label>
 							<div class="checkbox-grid">
 								{['JavaScript', 'Python', 'Java', 'C++', 'Go', 'Rust', 'TypeScript', 'PHP', 'Other'].map((lang) => (
-									<div class="checkbox-item">
-										<input type="checkbox" name="languages" value={lang} checked={draftData?.languages?.includes(lang)} />
-										<span>{lang}</span>
-									</div>
+								<label class="checkbox-item">
+									<input
+									type="checkbox"
+									name="languages"
+									value={lang}
+									checked={draftData?.languages?.includes(lang)}
+									/>
+									<span>{lang}</span>
+								</label>
 								))}
 							</div>
 						</div>
@@ -112,18 +117,38 @@ if (existingApplication && existingApplication.is_draft) {
 						<div class="form-group">
 							<label>Do you have research experience?</label>
 							<div style="margin-top: 0.5rem;">
-								<div class="radio-item" style="margin-bottom: 0.5rem;">
-									<input type="radio" name="research_experience" value="yes" checked={draftData?.research_experience === 'yes'} required />
-									<span>Yes, I have conducted research before</span>
-								</div>
-								<div class="radio-item" style="margin-bottom: 0.5rem;">
-									<input type="radio" name="research_experience" value="coursework" checked={draftData?.research_experience === 'coursework'} required />
-									<span>Only through coursework/class projects</span>
-								</div>
-								<div class="radio-item">
-									<input type="radio" name="research_experience" value="no" checked={draftData?.research_experience === 'no'} required />
-									<span>No, but I'm eager to learn</span>
-								</div>
+								<label class="radio-item" style="margin-bottom: 0.5rem;">
+								<input
+									type="radio"
+									name="research_experience"
+									value="yes"
+									checked={draftData?.research_experience === 'yes'}
+									required
+								/>
+								<span>Yes, I have conducted research before</span>
+								</label>
+
+								<label class="radio-item" style="margin-bottom: 0.5rem;">
+								<input
+									type="radio"
+									name="research_experience"
+									value="coursework"
+									checked={draftData?.research_experience === 'coursework'}
+									required
+								/>
+								<span>Only through coursework/class projects</span>
+								</label>
+
+								<label class="radio-item">
+								<input
+									type="radio"
+									name="research_experience"
+									value="no"
+									checked={draftData?.research_experience === 'no'}
+									required
+								/>
+								<span>No, but I'm eager to learn</span>
+								</label>
 							</div>
 						</div>
 
