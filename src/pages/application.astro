@@ -100,7 +100,7 @@ if (existingApplication && existingApplication.is_draft) {
 								Which programming languages are you familiar with? (Select all that apply)
 							</label>
 							<div class="checkbox-grid">
-								{['JavaScript', 'Python', 'Java', 'C++', 'Go', 'Rust', 'TypeScript', 'PHP', 'Other'].map((lang) => (
+								{['None', 'JavaScript', 'Python', 'Java', 'C++', 'Go', 'Rust', 'TypeScript', 'PHP', 'Other'].map((lang) => (
 									<div class="checkbox-item">
 										<input type="checkbox" name="languages" value={lang} checked={draftData?.languages?.includes(lang)} />
 										<span>{lang}</span>
@@ -138,6 +138,20 @@ if (existingApplication && existingApplication.is_draft) {
 								<option value="11th" selected={draftData?.grade_level === '11th'}>11th Grade (Junior)</option>
 								<option value="12th" selected={draftData?.grade_level === '12th'}>12th Grade (Senior)</option>
 							</select>
+						</div>
+
+						<div class="form-group">
+							<label>Do you need financial aid?</label>
+							<div style="margin-top: 0.5rem;">
+								<div class="radio-item" style="margin-bottom: 0.5rem;">
+									<input type="radio" name="needs_financial_aid" value="yes" checked={existingApplication?.needs_financial_aid === 1 || draftData?.needs_financial_aid === 'yes'} required />
+									<span>Yes, I need financial aid</span>
+								</div>
+								<div class="radio-item">
+									<input type="radio" name="needs_financial_aid" value="no" checked={existingApplication?.needs_financial_aid === 0 || draftData?.needs_financial_aid === 'no'} required />
+									<span>No, I do not need financial aid</span>
+								</div>
+							</div>
 						</div>
 
 

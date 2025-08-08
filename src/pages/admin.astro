@@ -25,6 +25,7 @@ const applications = await db.prepare(`
     a.essay_one,
     a.essay_two,
     a.experience_data,
+    a.needs_financial_aid,
     a.submitted_at,
     a.is_draft,
     u.name,
@@ -106,6 +107,12 @@ import Layout from '../layouts/Layout.astro';
 								<div class="mt-2 grid md:grid-cols-2 gap-4 text-sm">
 									<div>
 										<span class="font-medium">Grade Level:</span> {experienceData.grade_level}
+									</div>
+									<div>
+										<span class="font-medium">Financial Aid:</span> 
+										<span class={app.needs_financial_aid ? 'text-orange-600 font-medium' : 'text-gray-600'}>
+											{app.needs_financial_aid ? 'Yes' : 'No'}
+										</span>
 									</div>
 								</div>
 

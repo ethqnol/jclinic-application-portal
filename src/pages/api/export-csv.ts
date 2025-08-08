@@ -69,6 +69,7 @@ export const GET: APIRoute = async ({ locals, cookies }) => {
         `"${experienceData.languages.join(', ')}"`,
         experienceData.research_experience,
         experienceData.grade_level || experienceData.academic_year, // Handle both field names for backward compatibility
+        app.needs_financial_aid ? 'Yes' : 'No',
         `"${experienceData.clubs_activities.replace(/"/g, '""')}"`,
         `"${experienceData.final_thoughts.replace(/"/g, '""')}"`,
         `"${app.essay_one.replace(/"/g, '""')}"`,

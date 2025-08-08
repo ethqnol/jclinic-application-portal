@@ -29,6 +29,7 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
     const languages = formData.getAll('languages');
     const researchExperience = formData.get('research_experience') as string;
     const gradeLevel = formData.get('grade_level') as string;
+    const needsFinancialAid = formData.get('needs_financial_aid') as string;
     const clubsActivities = formData.get('clubs_activities') as string;
     const finalThoughts = formData.get('final_thoughts') as string;
     
@@ -46,9 +47,13 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
       languages: languages || [],
       research_experience: researchExperience || null,
       grade_level: gradeLevel || null,
+      needs_financial_aid: needsFinancialAid || null,
       clubs_activities: clubsActivities || null,
       final_thoughts: finalThoughts || null
     });
+    
+    // Convert financial aid to boolean for database (null if not set in draft)
+    const needsFinancialAidBool = needsFinancialAid ? (needsFinancialAid === 'yes') : null;
 
     // Check if user already has a draft or submitted application
     const existing = await db.prepare('SELECT id, is_draft FROM applications WHERE user_id = ?')
@@ -67,24 +72,26 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
       // Update existing draft
       await db.prepare(`
         UPDATE applications 
-        SET essay_one = ?, essay_two = ?, experience_data = ?, last_updated = CURRENT_TIMESTAMP
+        SET essay_one = ?, essay_two = ?, experience_data = ?, needs_financial_aid = ?, last_updated = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).bind(
         essayOne || '',
         essayTwo || '',
         experienceData,
+        needsFinancialAidBool,
         session.user.id
       ).run();
     } else {
       // Create new draft
       await db.prepare(`
-        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, is_draft)
-        VALUES (?, ?, ?, ?, 1)
+        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, needs_financial_aid, is_draft)
+        VALUES (?, ?, ?, ?, ?, 1)
       `).bind(
         session.user.id,
         essayOne || '',
         essayTwo || '',
-        experienceData
+        experienceData,
+        needsFinancialAidBool
       ).run();
     }
 

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS applications (
   essay_one TEXT,
   essay_two TEXT,
   experience_data TEXT, -- JSON string for form responses
+  needs_financial_aid BOOLEAN DEFAULT 0,
   is_draft BOOLEAN DEFAULT 1,
   submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,

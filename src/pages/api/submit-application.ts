@@ -25,11 +25,12 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
     const languages = formData.getAll('languages');
     const researchExperience = formData.get('research_experience') as string;
     const gradeLevel = formData.get('grade_level') as string;
+    const needsFinancialAid = formData.get('needs_financial_aid') as string;
     const clubsActivities = formData.get('clubs_activities') as string;
     const finalThoughts = formData.get('final_thoughts') as string;
     
     // Validate required fields
-    if (!essayOne || !essayTwo || !programmingExperience || !researchExperience || !gradeLevel || !clubsActivities || !finalThoughts) {
+    if (!essayOne || !essayTwo || !programmingExperience || !researchExperience || !gradeLevel || !needsFinancialAid || !clubsActivities || !finalThoughts) {
       return new Response('Missing required fields', { status: 400 });
     }
 
@@ -51,29 +52,34 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
       clubs_activities: clubsActivities,
       final_thoughts: finalThoughts
     });
+    
+    // Convert financial aid to boolean
+    const needsFinancialAidBool = needsFinancialAid === 'yes';
 
     if (existing) {
       // Update existing draft to submitted
       await db.prepare(`
         UPDATE applications 
-        SET essay_one = ?, essay_two = ?, experience_data = ?, is_draft = 0, submitted_at = CURRENT_TIMESTAMP, last_updated = CURRENT_TIMESTAMP
+        SET essay_one = ?, essay_two = ?, experience_data = ?, needs_financial_aid = ?, is_draft = 0, submitted_at = CURRENT_TIMESTAMP, last_updated = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).bind(
         essayOne,
         essayTwo,
         experienceData,
+        needsFinancialAidBool,
         session.user.id
       ).run();
     } else {
       // Insert new application
       await db.prepare(`
-        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, is_draft)
-        VALUES (?, ?, ?, ?, 0)
+        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, needs_financial_aid, is_draft)
+        VALUES (?, ?, ?, ?, ?, 0)
       `).bind(
         session.user.id,
         essayOne,
         essayTwo,
-        experienceData
+        experienceData,
+        needsFinancialAidBool
       ).run();
     }
 
