@@ -31,7 +31,7 @@ const errorMessages = {
 				
 					{error && (
 						<div class="alert alert-error">
-							<strong>Error:</strong> {errorMessages[error] || 'An unknown error occurred'}
+							<strong>Error:</strong> {errorMessages[error as keyof typeof errorMessages] || 'An unknown error occurred'}
 						</div>
 					)}
 					

@@ -1,5 +1,4 @@
 import type { APIRoute } from 'astro';
-import { setSession } from '../../../lib/auth';
 
 export const GET: APIRoute = async ({ url, redirect, locals, cookies }) => {
   const code = url.searchParams.get('code');

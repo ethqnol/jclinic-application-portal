@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { getSession } from '../../lib/auth';
 
-export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => {
+export const POST: APIRoute = async ({ request, locals, cookies }) => {
   const session = await getSession({ cookies } as any);
   
   if (!session) {
@@ -95,8 +95,8 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
 
   } catch (error) {
     console.error('Draft save error:', error);
-    console.error('Error details:', error.message, error.stack);
-    return new Response(JSON.stringify({ error: 'Internal server error', details: error.message }), {
+    console.error('Error details:', error instanceof Error ? error.message : 'Unknown error', error instanceof Error ? error.stack : '');
+    return new Response(JSON.stringify({ error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });

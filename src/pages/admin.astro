@@ -152,9 +152,11 @@ import Layout from '../layouts/Layout.astro';
 		</div>
 
 		<script>
-			function toggleFullView(id) {
+			function toggleFullView(id: string) {
 				const element = document.getElementById(`full-view-${id}`);
-				element.classList.toggle('hidden');
+				if (element) {
+					element.classList.toggle('hidden');
+				}
 			}
 
 			document.addEventListener('DOMContentLoaded', function() {
@@ -179,7 +181,7 @@ import Layout from '../layouts/Layout.astro';
 						}
 
 						const originalText = this.textContent;
-						this.disabled = true;
+						(this as HTMLButtonElement).disabled = true;
 						this.textContent = '🔄 Wiping...';
 
 						try {
@@ -202,7 +204,7 @@ import Layout from '../layouts/Layout.astro';
 						} catch (error) {
 							alert('❌ Error wiping database. Please try again.');
 						} finally {
-							this.disabled = false;
+							(this as HTMLButtonElement).disabled = false;
 							this.textContent = originalText;
 						}
 					});
