@@ -1,6 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { getSession } from '../lib/auth';
+import { getApplicationStatus } from '../lib/application-status';
 
 const session = await getSession(Astro);
 
@@ -11,15 +12,40 @@ if (!session) {
 // Check if user has already submitted an application or has a draft
 const db = Astro.locals.runtime?.env.DB;
 let existingApplication = null;
+let currentUser = session.user;
+
+// Check if applications are open
+const applicationsOpen = db ? await getApplicationStatus(db) : true;
 
 if (db) {
   existingApplication = await db.prepare('SELECT * FROM applications WHERE user_id = ?')
     .bind(session.user.id)
     .first();
+  
+  // Get the most up-to-date user information from the database
+  const dbUser = await db.prepare('SELECT * FROM users WHERE id = ?')
+    .bind(session.user.id)
+    .first();
+  
+  if (dbUser) {
+    currentUser = {
+      id: dbUser.id.toString(),
+      email: dbUser.email,
+      name: dbUser.name,
+      first_name: dbUser.first_name,
+      last_name: dbUser.last_name,
+      preferred_email: dbUser.preferred_email,
+    };
+  }
 }
 
 if (existingApplication && !existingApplication.is_draft) {
   return Astro.redirect('/dashboard');
+}
+
+// If applications are closed and user doesn't have a draft, redirect to closed page
+if (!applicationsOpen && !existingApplication) {
+  return Astro.redirect('/applications-closed');
 }
 
 // Parse existing draft data if available
@@ -40,7 +66,71 @@ if (existingApplication && existingApplication.is_draft) {
 			<div class="max-w-4xl mx-auto">
 				<h2>Application Form</h2>
 				
+				{!applicationsOpen && (
+					<div class="card" style="background: #fef3cd; border: 1px solid #f59e0b; margin-bottom: 1.5rem;">
+						<div style="display: flex; align-items: center; gap: 0.75rem;">
+							<span style="font-size: 1.5rem;">⚠️</span>
+							<div>
+								<p style="color: #92400e; margin: 0; font-weight: 600;">Applications Currently Closed</p>
+								<p style="color: #92400e; margin: 0.25rem 0 0 0; font-size: 0.875rem;">
+									You can still edit and save your draft, but submissions are not currently being accepted.
+								</p>
+							</div>
+						</div>
+					</div>
+				)}
+				
 				<form method="POST" action="/api/submit-application">
+					<!-- Personal Information -->
+					<div class="card">
+						<h3>Personal Information</h3>
+						
+						<div class="form-group">
+							<label for="first_name">
+								First Name *
+							</label>
+							<input 
+								type="text" 
+								id="first_name" 
+								name="first_name" 
+								required 
+								maxlength="50"
+								value={currentUser.first_name || ''}
+								placeholder="Enter your first name" />
+						</div>
+
+						<div class="form-group">
+							<label for="last_name">
+								Last Name *
+							</label>
+							<input 
+								type="text" 
+								id="last_name" 
+								name="last_name" 
+								required 
+								maxlength="50"
+								value={currentUser.last_name || ''}
+								placeholder="Enter your last name" />
+						</div>
+
+						<div class="form-group">
+							<label for="preferred_email">
+								Preferred Email Address *
+							</label>
+							<input 
+								type="email" 
+								id="preferred_email" 
+								name="preferred_email" 
+								required 
+								maxlength="100"
+								value={currentUser.preferred_email || ''}
+								placeholder="Enter your preferred email address" />
+							<p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+								This is the email address we'll use to contact you about your application.
+							</p>
+						</div>
+					</div>
+
 					<!-- Essay Questions -->
 					<div class="card">
 						<h3>Essay Questions</h3>
@@ -189,8 +279,14 @@ if (existingApplication && existingApplication.is_draft) {
 							</button>
 							<a href="/dashboard" style="color: #6b7280; text-decoration: underline;">← Back to Dashboard</a>
 						</div>
-						<button type="submit" class="btn btn-primary" style="padding: 1rem 2rem;">
-							Submit Application
+						<button 
+							type="submit" 
+							class="btn btn-primary" 
+							style={`padding: 1rem 2rem; ${!applicationsOpen ? 'opacity: 0.6; cursor: not-allowed;' : ''}`}
+							disabled={!applicationsOpen}
+							title={!applicationsOpen ? 'Applications are currently closed' : ''}
+						>
+							{applicationsOpen ? 'Submit Application' : 'Applications Closed'}
 						</button>
 					</div>
 					<div id="save-status" style="margin-top: 1rem; text-align: center; display: none;"></div>

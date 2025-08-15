@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { getSession } from '../../lib/auth';
+import { getApplicationStatus } from '../../lib/application-status';
 
 export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => {
   const session = await getSession({ cookies } as any);
@@ -13,8 +14,22 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
     return new Response('Database not available', { status: 500 });
   }
 
+  // Check if applications are open
+  const applicationsOpen = await getApplicationStatus(db);
+  if (!applicationsOpen) {
+    return new Response(JSON.stringify({ error: 'Applications are currently closed' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   try {
     const formData = await request.formData();
+    
+    // Extract personal information
+    const firstName = formData.get('first_name') as string;
+    const lastName = formData.get('last_name') as string;
+    const preferredEmail = formData.get('preferred_email') as string;
     
     // Extract essay responses
     const essayOne = formData.get('essay_one') as string;
@@ -30,9 +45,16 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
     const finalThoughts = formData.get('final_thoughts') as string;
     
     // Validate required fields
-    if (!essayOne || !essayTwo || !programmingExperience || !researchExperience || !gradeLevel || !needsFinancialAid || !clubsActivities || !finalThoughts) {
+    if (!firstName || !lastName || !preferredEmail || !essayOne || !essayTwo || !programmingExperience || !researchExperience || !gradeLevel || !needsFinancialAid || !clubsActivities || !finalThoughts) {
       return new Response('Missing required fields', { status: 400 });
     }
+
+    // Update user's personal information
+    await db.prepare(`
+      UPDATE users 
+      SET first_name = ?, last_name = ?, preferred_email = ?, name = ?
+      WHERE id = ?
+    `).bind(firstName, lastName, preferredEmail, `${firstName} ${lastName}`, session.user.id).run();
 
     // Check if user already has a submitted application
     const existing = await db.prepare('SELECT id, is_draft FROM applications WHERE user_id = ?')

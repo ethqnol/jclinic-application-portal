@@ -1,0 +1,39 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getSession } from '../lib/auth';
+
+const session = await getSession(Astro);
+
+if (!session) {
+  return Astro.redirect('/');
+}
+---
+
+<Layout title="Applications Closed - Application Portal" session={session}>
+  <main class="main-content">
+    <div class="container">
+      <div style="text-align: center; padding: 3rem 1rem;">
+        <div class="card" style="max-width: 600px; margin: 0 auto;">
+          <div style="padding: 2rem;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">🔒</div>
+            
+            <h1 style="color: var(--text-dark); margin-bottom: 1rem;">Applications Currently Closed</h1>
+            
+            <p style="color: var(--gray-600); font-size: 1.125rem; margin-bottom: 2rem;">
+              Thank you for your interest in the JClinic Bootcamp! Applications are currently closed for new submissions.
+            </p>
+            
+            <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+              <a href="/dashboard" class="btn btn-primary">
+                Return to Dashboard
+              </a>
+              <a href="/" class="btn btn-secondary">
+                Home
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</Layout>

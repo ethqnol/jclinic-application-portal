@@ -1,5 +1,6 @@
 ---
 import { getSession, isAdmin } from '../lib/auth';
+import { getApplicationStatus } from '../lib/application-status';
 
 const session = await getSession(Astro);
 
@@ -18,6 +19,9 @@ if (!userIsAdmin) {
   return new Response('Unauthorized', { status: 403 });
 }
 
+// Get application status
+const applicationsOpen = await getApplicationStatus(db);
+
 // Get submitted applications with user data (ONLY submitted, no drafts)
 const applications = await db.prepare(`
   SELECT 
@@ -29,7 +33,10 @@ const applications = await db.prepare(`
     a.submitted_at,
     a.is_draft,
     u.name,
-    u.email
+    u.email,
+    u.first_name,
+    u.last_name,
+    u.preferred_email
   FROM applications a
   JOIN users u ON a.user_id = u.id
   WHERE a.is_draft = 0
@@ -43,6 +50,33 @@ import Layout from '../layouts/Layout.astro';
 	<main class="main-content">
 		<div class="admin-section">
 			<div class="container">
+			<!-- Application Status Control -->
+			<div style="background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; border: 1px solid #e5e7eb;">
+				<div style="display: flex; justify-content: space-between; align-items: center;">
+					<div>
+						<h3 style="margin: 0; font-size: 1.125rem; font-weight: 600; color: #111827;">Application Status</h3>
+						<p style="margin: 0.5rem 0 0 0; color: #6b7280; font-size: 0.875rem;">
+							Control whether new applications can be submitted
+						</p>
+					</div>
+					<div style="display: flex; align-items: center; gap: 1rem;">
+						<span style={`font-weight: 600; ${applicationsOpen ? 'color: #059669;' : 'color: #dc2626;'}`}>
+							{applicationsOpen ? '🟢 Open' : '🔴 Closed'}
+						</span>
+						<button 
+							id="toggle-applications-btn" 
+							class="btn"
+							style={`${applicationsOpen 
+								? 'background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);' 
+								: 'background: linear-gradient(135deg, #059669 0%, #047857 100%);'
+							} color: white;`}
+						>
+							{applicationsOpen ? '🔴 Close Applications' : '🟢 Open Applications'}
+						</button>
+					</div>
+				</div>
+			</div>
+
 			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
 				<h2>Applications ({applications.results?.length || 0})</h2>
 				<div style="display: flex; gap: 1rem;">
@@ -64,8 +98,9 @@ import Layout from '../layouts/Layout.astro';
 								<div class="border-b border-gray-200 pb-4 mb-4">
 									<div class="flex justify-between items-start">
 										<div>
-											<h3 class="text-lg font-semibold text-gray-900">{app.name}</h3>
-											<p class="text-gray-600">{app.email}</p>
+											<h3 class="text-lg font-semibold text-gray-900">{app.first_name} {app.last_name}</h3>
+											<p class="text-gray-600">Google Account: {app.email}</p>
+											<p class="text-gray-600">Preferred Contact: {app.preferred_email}</p>
 										</div>
 										<div class="text-right">
 											<p class="text-sm text-gray-500">Application #{app.id}</p>
@@ -167,6 +202,56 @@ import Layout from '../layouts/Layout.astro';
 			}
 
 			document.addEventListener('DOMContentLoaded', function() {
+				// Handle application toggle
+				const toggleBtn = document.getElementById('toggle-applications-btn');
+				if (toggleBtn) {
+					toggleBtn.addEventListener('click', async function() {
+						const isCurrentlyOpen = this.textContent.includes('Close');
+						const newState = !isCurrentlyOpen;
+						
+						const originalText = this.textContent;
+						(this as HTMLButtonElement).disabled = true;
+						this.textContent = '🔄 Updating...';
+
+						try {
+							const formData = new FormData();
+							formData.append('isOpen', newState.toString());
+
+							const response = await fetch('/api/admin/toggle-applications', {
+								method: 'POST',
+								body: formData
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								// Update button text and style
+								this.textContent = newState ? '🔴 Close Applications' : '🟢 Open Applications';
+								this.style.background = newState 
+									? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' 
+									: 'linear-gradient(135deg, #059669 0%, #047857 100%)';
+								
+								// Update status indicator
+								const statusIndicator = this.parentElement?.previousElementSibling?.querySelector('span');
+								if (statusIndicator) {
+									statusIndicator.textContent = newState ? '🟢 Open' : '🔴 Closed';
+									statusIndicator.style.color = newState ? '#059669' : '#dc2626';
+								}
+								
+								alert(`✅ ${result.message}`);
+							} else {
+								alert(`❌ Error: ${result.error}`);
+								this.textContent = originalText;
+							}
+						} catch (error) {
+							alert('❌ Error updating application status. Please try again.');
+							this.textContent = originalText;
+						} finally {
+							(this as HTMLButtonElement).disabled = false;
+						}
+					});
+				}
+
 				const wipeBtn = document.getElementById('wipe-database-btn');
 				if (wipeBtn) {
 					wipeBtn.addEventListener('click', async function() {

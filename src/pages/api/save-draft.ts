@@ -22,6 +22,11 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
   try {
     const formData = await request.formData();
     
+    // Extract personal information
+    const firstName = formData.get('first_name') as string;
+    const lastName = formData.get('last_name') as string;
+    const preferredEmail = formData.get('preferred_email') as string;
+    
     // Extract all form data (no validation required for drafts)
     const essayOne = formData.get('essay_one') as string;
     const essayTwo = formData.get('essay_two') as string;
@@ -32,6 +37,15 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
     const needsFinancialAid = formData.get('needs_financial_aid') as string;
     const clubsActivities = formData.get('clubs_activities') as string;
     const finalThoughts = formData.get('final_thoughts') as string;
+
+    // Update user's personal information if provided
+    if (firstName && lastName && preferredEmail) {
+      await db.prepare(`
+        UPDATE users 
+        SET first_name = ?, last_name = ?, preferred_email = ?, name = ?
+        WHERE id = ?
+      `).bind(firstName, lastName, preferredEmail, `${firstName} ${lastName}`, session.user.id).run();
+    }
     
     // Debug specific fields that aren't working
     console.log('Debug form extraction:', {
