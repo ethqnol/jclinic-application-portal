@@ -2,9 +2,10 @@
 export interface Props {
 	title: string;
 	session?: any;
+	userRole?: string;
 }
 
-const { title, session } = Astro.props;
+const { title, session, userRole } = Astro.props;
 ---
 
 <!DOCTYPE html>
@@ -34,7 +35,16 @@ const { title, session } = Astro.props;
 						<div class="header-user">
 							<span class="user-name">Welcome, {session.user.name}</span>
 							<div class="user-actions">
-								<a href="/dashboard" class="btn-header">Dashboard</a>
+								{userRole === 'admin' ? (
+									<>
+										<a href="/review" class="btn-header">Review Portal</a>
+										<a href="/admin" class="btn-header">Admin Console</a>
+									</>
+								) : userRole === 'reviewer' ? (
+									<a href="/review" class="btn-header">Review Portal</a>
+								) : (
+									<a href="/dashboard" class="btn-header">Dashboard</a>
+								)}
 								<form method="POST" action="/api/auth/logout" class="logout-form">
 									<button type="submit" class="btn-header btn-logout">Logout</button>
 								</form>

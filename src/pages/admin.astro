@@ -1,5 +1,5 @@
 ---
-import { getSession, isAdmin } from '../lib/auth';
+import { getSession, getUserRole } from '../lib/auth';
 import { getApplicationStatus } from '../lib/application-status';
 
 const session = await getSession(Astro);
@@ -13,9 +13,12 @@ if (!db) {
   return new Response('Database not available', { status: 500 });
 }
 
-// Check if user is admin
-const userIsAdmin = await isAdmin(session.user.email, db);
-if (!userIsAdmin) {
+// Check user role - redirect reviewers to their review queue
+const userRole = await getUserRole(session.user.email, db);
+if (userRole === 'reviewer') {
+  return Astro.redirect('/review');
+}
+if (userRole !== 'admin') {
   return new Response('Unauthorized', { status: 403 });
 }
 
@@ -36,6 +39,7 @@ const applications = await db.prepare(`
     a.review_status,
     a.assigned_at,
     a.reviewed_at,
+    a.reviewer_grade,
     u.name,
     u.email,
     u.first_name,
@@ -47,13 +51,15 @@ const applications = await db.prepare(`
   ORDER BY a.submitted_at DESC
 `).all();
 
-// Get all admin users for assignment dropdown
+// Get all admin and reviewer users for assignment dropdown
 const admins = await db.prepare('SELECT email FROM admins ORDER BY email').all();
+const reviewers = await db.prepare('SELECT email FROM reviewers ORDER BY email').all();
+const allAssignees = [...(admins.results || []), ...(reviewers.results || [])].sort((a, b) => a.email.localeCompare(b.email));
 
 import Layout from '../layouts/Layout.astro';
 ---
 
-<Layout title="Admin Dashboard - Application Portal" session={session}>
+<Layout title="Admin Dashboard - Application Portal" session={session} userRole={userRole}>
 	<main class="main-content">
 		<div class="admin-section">
 			<div class="container">
@@ -84,12 +90,33 @@ import Layout from '../layouts/Layout.astro';
 				</div>
 			</div>
 
+
+			<!-- Reviewer Management Section -->
+			<div style="background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);">
+				<h3 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: #374151;">Reviewer Management</h3>
+				
+				<div style="display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center;">
+					<div style="display: flex; align-items: center; gap: 0.75rem;">
+						<input 
+							id="newReviewerEmail" 
+							type="email" 
+							placeholder="Enter reviewer email..." 
+							style="height: 40px; padding: 0 0.75rem; border: 2px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; min-width: 250px; background: white;"
+						>
+						<button id="addReviewerBtn" style="height: 40px; padding: 0 1rem; background: #6b7280; color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: not-allowed; white-space: nowrap;" disabled>
+							➕ Add Reviewer
+						</button>
+					</div>
+					
+					<div style="font-size: 0.75rem; color: #6b7280; text-align: right;">
+						Total Reviewers: {(reviewers.results?.length || 0) + (admins.results?.length || 0)}
+					</div>
+				</div>
+			</div>
+
 			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
 				<h2>Applications ({applications.results?.length || 0})</h2>
 				<div style="display: flex; gap: 1rem;">
-					<a href="/admin/review" class="btn btn-primary">
-						📋 My Review Queue
-					</a>
 					<a href="/api/export-csv" class="btn btn-secondary">
 						Export to CSV
 					</a>
@@ -101,30 +128,41 @@ import Layout from '../layouts/Layout.astro';
 
 			<!-- Assignment Controls -->
 			{applications.results && applications.results.length > 0 && (
-				<div class="card mb-4">
-					<div class="flex flex-wrap items-center gap-4">
-						<div class="flex items-center gap-2">
-							<input type="checkbox" id="selectAll" class="rounded">
-							<label for="selectAll" class="text-sm font-medium">Select All</label>
+				<div style="background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);">
+					<h3 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: #374151;">Assignment Controls</h3>
+					
+					<div style="display: grid; grid-template-columns: auto 1fr auto auto; gap: 1.5rem; align-items: center;">
+						<!-- Select All -->
+						<div style="display: flex; align-items: center; gap: 0.5rem;">
+							<input type="checkbox" id="selectAll" style="width: 18px; height: 18px; border-radius: 4px; border: 2px solid #d1d5db; margin: 0; flex-shrink: 0; vertical-align: middle;">
+							<label for="selectAll" style="font-size: 0.875rem; font-weight: 500; color: #374151; white-space: nowrap; line-height: 18px; vertical-align: middle; margin: 0; padding: 0;">Select All</label>
 						</div>
 						
-						<div class="flex items-center gap-2">
-							<select id="assignToSelect" class="px-3 py-1 border border-gray-300 rounded text-sm">
-								<option value="">Select admin...</option>
-								{admins.results?.map((admin: any) => (
-									<option value={admin.email}>{admin.email}</option>
+						<!-- Assignment Section -->
+						<div style="display: flex; align-items: center; gap: 0.75rem;">
+							<select id="assignToSelect" style="height: 40px; padding: 0 0.75rem; border: 2px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; min-width: 180px; background: white;">
+								<option value="">Choose reviewer to assign...</option>
+								{allAssignees.map((assignee: any) => (
+									<option value={assignee.email}>{assignee.email}</option>
 								))}
 							</select>
-							<button id="assignSelectedBtn" class="btn btn-secondary text-sm px-3 py-1" disabled>
+							<button id="assignSelectedBtn" style="height: 40px; padding: 0 1rem; background: #6b7280; color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: not-allowed; white-space: nowrap;" disabled>
 								Assign Selected
 							</button>
 						</div>
 
-						<button id="autoAssignBtn" class="btn btn-primary text-sm px-3 py-1">
-							🎯 Auto-Assign All
-						</button>
+						<!-- Bulk Actions -->
+						<div style="display: flex; gap: 0.75rem;">
+							<button id="autoAssignBtn" style="height: 40px; padding: 0 1rem; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;">
+								🎯 Auto-Assign
+							</button>
+							<button id="unassignAllBtn" style="height: 40px; padding: 0 1rem; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;">
+								🔄 Unassign All
+							</button>
+						</div>
 
-						<div class="ml-auto text-sm text-gray-600">
+						<!-- Selected Count -->
+						<div style="font-size: 0.875rem; color: #6b7280; white-space: nowrap;">
 							<span id="selectedCount">0</span> selected
 						</div>
 					</div>
@@ -139,61 +177,76 @@ import Layout from '../layouts/Layout.astro';
 							'assigned': 'border-orange-500',
 							'in_review': 'border-blue-500', 
 							'completed': 'border-green-500'
-						};
+						} as const;
 						const statusTexts = {
 							'unassigned': '⚪ Unassigned',
 							'assigned': '🟡 Assigned',
 							'in_review': '🔵 In Review',
 							'completed': '🟢 Completed'
-						};
+						} as const;
 						
 						return (
 							<div 
-								class={`card hover:shadow-lg transition-shadow border-l-4 ${statusColors[app.review_status] || 'border-gray-400'}`}
+								class={`card hover:shadow-lg transition-shadow border-l-4 ${statusColors[app.review_status as keyof typeof statusColors] || 'border-gray-400'}`}
+								style="padding: 1rem; margin-bottom: 0.5rem;"
 							>
-								<div class="flex items-center gap-3">
+								<div style="display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center;">
+									<!-- Checkbox -->
 									<input 
 										type="checkbox" 
-										class="app-checkbox rounded" 
+										class="app-checkbox" 
 										data-app-id={app.id}
-										onclick="event.stopPropagation()"
+										style="width: 18px; height: 18px; margin: 0; border-radius: 4px; border: 2px solid #d1d5db;"
 									>
+									
+									<!-- Main Content -->
 									<div 
-										class="flex-1 cursor-pointer"
+										style="cursor: pointer; min-width: 0;"
 										onclick={`window.location.href='/admin/application/${app.id}'`}
 									>
-										<div class="flex justify-between items-center">
-											<div class="flex-1">
-												<h3 class="text-lg font-semibold text-gray-900 mb-0.5">
-													{app.first_name} {app.last_name}
-												</h3>
-												<p class="text-gray-600 text-sm mb-0.5">
-													{app.preferred_email || app.email}
-												</p>
-												<div class="flex items-center gap-3">
-													<span class="text-sm font-medium">
-														{statusTexts[app.review_status] || '⚪ Unknown'}
-													</span>
-													{app.assigned_to && (
-														<span class="text-xs text-gray-500">
-															→ {app.assigned_to}
-														</span>
-													)}
-													{app.needs_financial_aid && (
-														<span class="inline-block bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded-full">
-															Financial Aid Requested
-														</span>
-													)}
-												</div>
-											</div>
-											<div class="text-right">
-												<p class="text-sm font-medium text-gray-900">Application #{app.id}</p>
-												<p class="text-sm text-gray-500">
-													{new Date(app.submitted_at).toLocaleDateString()}
-												</p>
-												<p class="text-xs text-blue-600 mt-0.5">Click to view details →</p>
-											</div>
+										<h3 style="font-size: 1.125rem; font-weight: 600; color: #111827; margin: 0 0 0.25rem 0;">
+											{app.first_name} {app.last_name}
+										</h3>
+										<p style="color: #6b7280; font-size: 0.875rem; margin: 0 0 0.5rem 0;">
+											{app.preferred_email || app.email}
+										</p>
+										<div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+											<span style="font-size: 0.875rem; font-weight: 500;">
+												{statusTexts[app.review_status as keyof typeof statusTexts] || '⚪ Unknown'}
+											</span>
+											{app.review_status === 'completed' && app.reviewer_grade && (
+												<span style={`display: inline-block; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 600; ${
+													app.reviewer_grade >= 4 ? 'background: #dcfce7; color: #166534;' :
+													app.reviewer_grade === 3 ? 'background: #fef3c7; color: #92400e;' :
+													'background: #fee2e2; color: #991b1b;'
+												}`}>
+													Grade: {app.reviewer_grade}/5
+												</span>
+											)}
+											{app.assigned_to && (
+												<span style="font-size: 0.75rem; color: #6b7280;">
+													Assigned to: {app.assigned_to}
+												</span>
+											)}
+											{app.needs_financial_aid && (
+												<span style="display: inline-block; background: #fed7aa; color: #ea580c; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 500;">
+													Financial Aid Requested
+												</span>
+											)}
 										</div>
+									</div>
+
+									<!-- Right Info -->
+									<div style="text-align: right; white-space: nowrap;">
+										<p style="font-size: 0.875rem; font-weight: 600; color: #111827; margin: 0 0 0.25rem 0;">
+											App #{app.id}
+										</p>
+										<p style="font-size: 0.75rem; color: #6b7280; margin: 0 0 0.25rem 0;">
+											{new Date(app.submitted_at).toLocaleDateString()}
+										</p>
+										<p style="font-size: 0.75rem; color: #2563eb; margin: 0; cursor: pointer;">
+											View Details →
+										</p>
 									</div>
 								</div>
 							</div>
@@ -317,7 +370,13 @@ import Layout from '../layouts/Layout.astro';
 				const assignSelectedBtn = document.getElementById('assignSelectedBtn') as HTMLButtonElement;
 				const assignToSelect = document.getElementById('assignToSelect') as HTMLSelectElement;
 				const autoAssignBtn = document.getElementById('autoAssignBtn') as HTMLButtonElement;
+				const unassignAllBtn = document.getElementById('unassignAllBtn') as HTMLButtonElement;
 				const selectedCountSpan = document.getElementById('selectedCount') as HTMLSpanElement;
+
+				// Reviewer management elements
+				const newReviewerEmail = document.getElementById('newReviewerEmail') as HTMLInputElement;
+				const addReviewerBtn = document.getElementById('addReviewerBtn') as HTMLButtonElement;
+
 
 				// Update selected count and button state
 				function updateAssignmentControls() {
@@ -326,7 +385,16 @@ import Layout from '../layouts/Layout.astro';
 					
 					const hasSelection = selectedCount > 0;
 					const hasAdminSelected = assignToSelect.value !== '';
+					
+					// Update assign button
 					assignSelectedBtn.disabled = !hasSelection || !hasAdminSelected;
+					if (assignSelectedBtn.disabled) {
+						assignSelectedBtn.style.background = '#6b7280';
+						assignSelectedBtn.style.cursor = 'not-allowed';
+					} else {
+						assignSelectedBtn.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
+						assignSelectedBtn.style.cursor = 'pointer';
+					}
 				}
 
 				// Select all functionality
@@ -352,6 +420,11 @@ import Layout from '../layouts/Layout.astro';
 						}
 						
 						updateAssignmentControls();
+					});
+
+					// Stop propagation on checkbox clicks
+					checkbox.addEventListener('click', function(event) {
+						event.stopPropagation();
 					});
 				});
 
@@ -456,8 +529,122 @@ import Layout from '../layouts/Layout.astro';
 					});
 				}
 
+				// Unassign all functionality
+				if (unassignAllBtn) {
+					unassignAllBtn.addEventListener('click', async function() {
+						if (!confirm('⚠️ This will unassign ALL applications and reset their review status to "unassigned". Continue?')) {
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Unassigning...';
+
+						try {
+							const response = await fetch('/api/admin/unassign-all', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								}
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error unassigning applications. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+						}
+					});
+				}
+
+				// Reviewer management functionality
+				function updateAddReviewerButton() {
+				    if (!newReviewerEmail) return;
+					
+					const hasEmail = newReviewerEmail.value.trim() !== '';
+					const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newReviewerEmail.value.trim());
+					
+					addReviewerBtn.disabled = !hasEmail || !isValidEmail;
+					
+					if (addReviewerBtn.disabled) {
+						addReviewerBtn.style.background = '#6b7280';
+						addReviewerBtn.style.cursor = 'not-allowed';
+					} else {
+						addReviewerBtn.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
+						addReviewerBtn.style.cursor = 'pointer';
+					}
+				}
+
+				// Email input change
+				if (newReviewerEmail) {
+					newReviewerEmail.addEventListener('input', updateAddReviewerButton);
+					newReviewerEmail.addEventListener('keypress', function(event) {
+						if (event.key === 'Enter' && !addReviewerBtn.disabled) {
+							addReviewerBtn.click();
+						}
+					});
+				}
+
+				// Add reviewer functionality
+				if (addReviewerBtn) {
+					addReviewerBtn.addEventListener('click', async function() {
+						const email = newReviewerEmail.value.trim();
+						
+						if (!email) {
+							alert('Please enter an email address.');
+							return;
+						}
+
+						if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+							alert('Please enter a valid email address.');
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Adding...';
+
+						try {
+							const response = await fetch('/api/admin/add-reviewer', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								},
+								body: JSON.stringify({
+									email: email
+								})
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								newReviewerEmail.value = '';
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error adding reviewer. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+							updateAddReviewerButton();
+						}
+					});
+				}
+
 				// Initial state
 				updateAssignmentControls();
+				updateAddReviewerButton();
 			});
 		</script>
 	</main>

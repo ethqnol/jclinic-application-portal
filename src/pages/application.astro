@@ -66,6 +66,19 @@ if (existingApplication && existingApplication.is_draft) {
 			<div class="max-w-4xl mx-auto">
 				<h2>Application Form</h2>
 				
+				<!-- Program Information Notice -->
+				<div class="card" style="background: #e0f2fe; border: 1px solid #0369a1; margin-bottom: 1.5rem;">
+					<div style="display: flex; align-items: center; gap: 0.75rem;">
+						<span style="font-size: 1.5rem;">ℹ️</span>
+						<div>
+							<p style="color: #0369a1; margin: 0; font-weight: 600;">Program Information</p>
+							<p style="color: #0369a1; margin: 0.25rem 0 0 0; font-size: 0.875rem;">
+								Please note: This summer program is <strong>not residential</strong>. Students will commute daily to the program location.
+							</p>
+						</div>
+					</div>
+				</div>
+				
 				{!applicationsOpen && (
 					<div class="card" style="background: #fef3cd; border: 1px solid #f59e0b; margin-bottom: 1.5rem;">
 						<div style="display: flex; align-items: center; gap: 0.75rem;">
@@ -79,6 +92,19 @@ if (existingApplication && existingApplication.is_draft) {
 						</div>
 					</div>
 				)}
+				
+				<!-- Recommendation Letter Information -->
+				<div style="background: #f0f9ff; border: 1px solid #0284c7; border-radius: 8px; padding: 0.75rem; margin-bottom: 1.5rem;">
+					<div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+						<span style="font-size: 1.1rem;">📧</span>
+						<h4 style="color: #0284c7; margin: 0; font-size: 0.9rem; font-weight: 600;">Recommendation Letter (Optional)</h4>
+					</div>
+					<p style="color: #0369a1; margin: 0; font-size: 0.8rem; line-height: 1.4;">
+						Have your teacher email a PDF/DOCX to <strong>wuethan@mit.edu</strong> with:<br>
+						<span style="margin-left: 0.5rem;">• File name: </span><code style="background: rgba(2, 132, 199, 0.15); padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.75rem;">&lt;lastname&gt;-&lt;firstname&gt;-bootcamp-rec-letter</code><br>
+						<span style="margin-left: 0.5rem;">• Subject: </span><strong>"Your Last Name, Your First Name Bootcamp Recommendation Letter"</strong>
+					</p>
+				</div>
 				
 				<form method="POST" action="/api/submit-application">
 					<!-- Personal Information -->
@@ -127,6 +153,21 @@ if (existingApplication && existingApplication.is_draft) {
 								placeholder="Enter your preferred email address" />
 							<p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
 								This is the email address we'll use to contact you about your application.
+							</p>
+						</div>
+
+						<div class="form-group">
+							<label for="student_location">
+								Student Location *
+							</label>
+							<select id="student_location" name="student_location" required>
+								<option value="">Select your location</option>
+								<option value="massachusetts" selected={existingApplication?.student_location === 'massachusetts' || draftData?.student_location === 'massachusetts'}>Massachusetts</option>
+								<option value="out_of_state" selected={existingApplication?.student_location === 'out_of_state' || draftData?.student_location === 'out_of_state'}>Out of State</option>
+								<option value="international" selected={existingApplication?.student_location === 'international' || draftData?.student_location === 'international'}>International</option>
+							</select>
+							<p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+								Please indicate if you are based in Massachusetts, another US state, or international.
 							</p>
 						</div>
 					</div>
@@ -190,7 +231,7 @@ if (existingApplication && existingApplication.is_draft) {
 								Which programming languages are you familiar with? (Select all that apply)
 							</label>
 							<div class="checkbox-grid">
-								{['None', 'JavaScript', 'Python', 'Java', 'C++', 'Go', 'Rust', 'TypeScript', 'PHP', 'Other'].map((lang) => (
+								{['None', 'Python', 'Java', 'JS/TS', 'C++', 'Rust', 'Other'].map((lang) => (
 									<div class="checkbox-item">
 										<input type="checkbox" name="languages" value={lang} checked={draftData?.languages?.includes(lang)} />
 										<span>{lang}</span>

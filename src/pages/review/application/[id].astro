@@ -54,12 +54,36 @@ if (!application) {
   return new Response('Application not found', { status: 404 });
 }
 
+// Get navigation info - next and previous applications assigned to this user
+const assignedApplications = await db.prepare(`
+  SELECT a.id
+  FROM applications a
+  WHERE a.assigned_to = ? AND a.is_draft = 0
+  ORDER BY a.assigned_at ASC, a.id ASC
+`).bind(session.user.email).all();
+
+let currentIndex = -1;
+let nextApplicationId = null;
+let prevApplicationId = null;
+
+if (assignedApplications.results) {
+  currentIndex = assignedApplications.results.findIndex((app: any) => app.id === parseInt(id as string));
+  if (currentIndex !== -1) {
+    if (currentIndex > 0) {
+      prevApplicationId = assignedApplications.results[currentIndex - 1].id;
+    }
+    if (currentIndex < assignedApplications.results.length - 1) {
+      nextApplicationId = assignedApplications.results[currentIndex + 1].id;
+    }
+  }
+}
+
 const experienceData = JSON.parse(application.experience_data);
 
 import Layout from '../../../layouts/Layout.astro';
 ---
 
-<Layout title={`Application #${application.id} - Admin Portal`} session={session} userRole={userRole}>
+<Layout title={`Application #${application.id} - Review Portal`} session={session} userRole={userRole}>
 	<style>
 		.sidebar {
 			position: sticky;
@@ -234,19 +258,62 @@ import Layout from '../../../layouts/Layout.astro';
 			}
 		};
 
+		// Grade selection functionality
+		window.selectGrade = function(grade) {
+			// Check if review is completed and prevent changes
+			const reviewStatus = '{application.review_status}';
+			if (reviewStatus === 'completed') {
+				return;
+			}
+			
+			// Update hidden input
+			const gradeInput = document.getElementById('reviewer_grade');
+			if (gradeInput) {
+				gradeInput.value = grade;
+			}
+			
+			// Update visual state of grade buttons
+			for (let i = 1; i <= 5; i++) {
+				const btn = document.getElementById(`grade-${i}`);
+				if (btn) {
+					if (i === grade) {
+						// Selected state with color coding
+						if (grade >= 4) {
+							btn.className = 'w-12 h-12 rounded-full border-2 font-semibold text-sm transition-all bg-green-500 border-green-500 text-white';
+						} else if (grade === 3) {
+							btn.className = 'w-12 h-12 rounded-full border-2 font-semibold text-sm transition-all bg-yellow-500 border-yellow-500 text-white';
+						} else {
+							btn.className = 'w-12 h-12 rounded-full border-2 font-semibold text-sm transition-all bg-red-500 border-red-500 text-white';
+						}
+					} else {
+						// Unselected state
+						btn.className = 'w-12 h-12 rounded-full border-2 font-semibold text-sm transition-all bg-white border-gray-300 text-gray-700 hover:border-blue-500';
+					}
+				}
+			}
+		};
+
+
 		// Reviewer grading functionality
 		document.addEventListener('DOMContentLoaded', function() {
 			const saveReviewBtn = document.getElementById('save-review-btn');
 			const startReviewBtn = document.getElementById('start-review-btn');
 			const completeReviewBtn = document.getElementById('complete-review-btn');
 			const uncompleteReviewBtn = document.getElementById('uncomplete-review-btn');
-			const gradeSelect = document.getElementById('reviewer_grade');
+			const gradeInput = document.getElementById('reviewer_grade');
 			const notesTextarea = document.getElementById('reviewer_notes');
 
 			// Save review data
 			if (saveReviewBtn) {
 				saveReviewBtn.addEventListener('click', async function() {
-					const grade = gradeSelect?.value ? parseInt(gradeSelect.value) : null;
+					// Check if review is completed and prevent saving
+					const reviewStatus = '{application.review_status}';
+					if (reviewStatus === 'completed') {
+						alert('❌ Cannot save - this review has been completed. Reopen the review to make changes.');
+						return;
+					}
+					
+					const grade = gradeInput?.value ? parseInt(gradeInput.value) : null;
 					const notes = notesTextarea?.value || '';
 
 					const originalText = this.textContent;
@@ -321,7 +388,7 @@ import Layout from '../../../layouts/Layout.astro';
 			if (completeReviewBtn) {
 				completeReviewBtn.addEventListener('click', async function() {
 					// Validate grade and comments are provided
-					const grade = gradeSelect?.value ? parseInt(gradeSelect.value) : null;
+					const grade = gradeInput?.value ? parseInt(gradeInput.value) : null;
 					const notes = notesTextarea?.value?.trim() || '';
 
 					if (!grade || grade < 1 || grade > 5) {
@@ -434,12 +501,49 @@ import Layout from '../../../layouts/Layout.astro';
 		<div class="admin-section">
 			<div class="container max-w-7xl">
 				<!-- Header with navigation -->
-				<div class="flex items-center gap-4 mb-6 no-print">
-					<a href="/admin" class="text-blue-600 hover:text-blue-800 flex items-center gap-2">
-						← Back to Applications
-					</a>
-					<div class="h-6 border-l border-gray-300"></div>
-					<h1 class="text-2xl font-bold text-gray-900">Application #{application.id}</h1>
+				<div class="flex items-center justify-between mb-6 no-print">
+					<div class="flex items-center gap-4">
+						<a href="/review" class="text-blue-600 hover:text-blue-800 flex items-center gap-2">
+							← Back to My Review Queue
+						</a>
+						<div class="h-6 border-l border-gray-300"></div>
+						<h1 class="text-2xl font-bold text-gray-900">Application #{application.id}</h1>
+						{assignedApplications.results && assignedApplications.results.length > 1 && (
+							<div class="text-sm text-gray-500">
+								({currentIndex + 1} of {assignedApplications.results.length})
+							</div>
+						)}
+					</div>
+					
+					<!-- Quick Navigation -->
+					<div class="flex items-center gap-2">
+						{prevApplicationId ? (
+							<a 
+								href={`/review/application/${prevApplicationId}`} 
+								class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1"
+								id="prev-btn"
+							>
+								← Previous
+							</a>
+						) : (
+							<button disabled class="bg-gray-300 text-gray-500 px-3 py-2 rounded text-sm font-medium cursor-not-allowed flex items-center gap-1">
+								← Previous
+							</button>
+						)}
+						{nextApplicationId ? (
+							<a 
+								href={`/review/application/${nextApplicationId}`} 
+								class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded text-sm font-medium transition-colors flex items-center gap-1"
+								id="next-btn"
+							>
+								Next →
+							</a>
+						) : (
+							<button disabled class="bg-gray-300 text-gray-500 px-3 py-2 rounded text-sm font-medium cursor-not-allowed flex items-center gap-1">
+								Next →
+							</button>
+						)}
+					</div>
 				</div>
 
 				<!-- Contact Info Card (Top of page) -->
@@ -591,26 +695,55 @@ import Layout from '../../../layouts/Layout.astro';
 						</div>
 
 						<!-- Reviewer Grading Section -->
-						{userRole === 'reviewer' && application.assigned_to === session.user.email && (
+						{application.assigned_to === session.user.email && (
 							<div class="card mt-6 no-print">
-								<h3 class="text-lg font-semibold text-gray-900 mb-4">Reviewer Assessment</h3>
+								<h3 class="text-lg font-semibold text-gray-900 mb-4">Review Assessment</h3>
 								
-								<div class="space-y-4">
+								<div class="space-y-6">
+									{application.review_status === 'completed' && (
+										<div class="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4">
+											<div class="flex items-center">
+												<div class="text-orange-600 mr-3">🔒</div>
+												<div>
+													<h4 class="text-sm font-medium text-orange-800">Review Completed</h4>
+													<p class="text-sm text-orange-700">This review has been marked as completed. To make changes, reopen the review first.</p>
+												</div>
+											</div>
+										</div>
+									)}
 									<div>
-										<label for="reviewer_grade" class="block text-sm font-medium text-gray-700 mb-2">
+										<label class="block text-sm font-medium text-gray-700 mb-3">
 											Overall Grade (1-5 scale)
 										</label>
-										<select 
-											id="reviewer_grade" 
-											class="w-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-										>
-											<option value="">Select grade</option>
-											<option value="1" selected={application.reviewer_grade === 1}>1 - Poor</option>
-											<option value="2" selected={application.reviewer_grade === 2}>2 - Below Average</option>
-											<option value="3" selected={application.reviewer_grade === 3}>3 - Average</option>
-											<option value="4" selected={application.reviewer_grade === 4}>4 - Good</option>
-											<option value="5" selected={application.reviewer_grade === 5}>5 - Excellent</option>
-										</select>
+										<div class="flex gap-2">
+											{[1, 2, 3, 4, 5].map(grade => (
+												<button
+													type="button"
+													onclick={application.review_status === 'completed' ? '' : `selectGrade(${grade})`}
+													id={`grade-${grade}`}
+													disabled={application.review_status === 'completed'}
+													class={`w-12 h-12 rounded-full border-2 font-semibold text-sm transition-all ${
+														application.review_status === 'completed' 
+															? application.reviewer_grade === grade 
+																? grade >= 4 ? 'bg-green-300 border-green-300 text-white cursor-not-allowed' :
+																  grade === 3 ? 'bg-yellow-300 border-yellow-300 text-white cursor-not-allowed' :
+																  'bg-red-300 border-red-300 text-white cursor-not-allowed'
+																: 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+															: application.reviewer_grade === grade 
+																? grade >= 4 ? 'bg-green-500 border-green-500 text-white' :
+																  grade === 3 ? 'bg-yellow-500 border-yellow-500 text-white' :
+																  'bg-red-500 border-red-500 text-white'
+																: 'bg-white border-gray-300 text-gray-700 hover:border-blue-500'
+													}`}
+												>
+													{grade}
+												</button>
+											))}
+										</div>
+										<div class="mt-2 text-xs text-gray-500">
+											1 = Poor, 2 = Below Average, 3 = Average, 4 = Good, 5 = Excellent
+										</div>
+										<input type="hidden" id="reviewer_grade" value={application.reviewer_grade || ''} />
 									</div>
 									
 									<div>
@@ -619,16 +752,22 @@ import Layout from '../../../layouts/Layout.astro';
 										</label>
 										<textarea 
 											id="reviewer_notes" 
-											rows="4"
-											class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-											placeholder="Add your notes about this application..."
+											rows="6"
+											class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-vertical"
+											placeholder="Strengths, weaknesses, specific feedback, recommendations..."
+											disabled={application.review_status === 'completed'}
+											readonly={application.review_status === 'completed'}
 										>{application.reviewer_notes || ''}</textarea>
+										<div class="mt-1 text-xs text-gray-500">
+											Consider: Technical background, essay quality, motivation, fit for program
+										</div>
 									</div>
 									
-									<div class="flex gap-3">
+									<div class="flex gap-3 flex-wrap">
 										<button 
 											id="save-review-btn" 
-											class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-medium transition-colors"
+											class={application.review_status === 'completed' ? 'bg-gray-400 cursor-not-allowed text-white px-4 py-2 rounded font-medium' : 'bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-medium transition-colors'}
+											disabled={application.review_status === 'completed'}
 										>
 											💾 Save Review
 										</button>
@@ -660,6 +799,7 @@ import Layout from '../../../layouts/Layout.astro';
 								</div>
 							</div>
 						)}
+
 
 						<!-- Admin/Reviewer Status Display -->
 						{userRole === 'admin' && (
@@ -714,15 +854,9 @@ import Layout from '../../../layouts/Layout.astro';
 
 						<!-- Action Buttons -->
 						<div class="flex gap-4 mt-8 pt-6 border-t no-print">
-							{userRole === 'admin' ? (
-								<a href="/admin" class="btn btn-secondary">
-									← Back to All Applications
-								</a>
-							) : (
-								<a href="/review" class="btn btn-secondary">
-									← Back to My Review Queue
-								</a>
-							)}
+							<a href="/review" class="btn btn-secondary">
+								← Back to My Review Queue
+							</a>
 							<button onclick="window.print()" class="btn btn-primary">
 								🖨️ Print Application
 							</button>

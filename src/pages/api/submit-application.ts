@@ -30,6 +30,7 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
     const firstName = formData.get('first_name') as string;
     const lastName = formData.get('last_name') as string;
     const preferredEmail = formData.get('preferred_email') as string;
+    const studentLocation = formData.get('student_location') as string;
     
     // Extract essay responses
     const essayOne = formData.get('essay_one') as string;
@@ -45,7 +46,7 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
     const finalThoughts = formData.get('final_thoughts') as string;
     
     // Validate required fields
-    if (!firstName || !lastName || !preferredEmail || !essayOne || !essayTwo || !programmingExperience || !researchExperience || !gradeLevel || !needsFinancialAid || !clubsActivities || !finalThoughts) {
+    if (!firstName || !lastName || !preferredEmail || !studentLocation || !essayOne || !essayTwo || !programmingExperience || !researchExperience || !gradeLevel || !needsFinancialAid || !clubsActivities || !finalThoughts) {
       return new Response('Missing required fields', { status: 400 });
     }
 
@@ -82,26 +83,28 @@ export const POST: APIRoute = async ({ request, locals, redirect, cookies }) => 
       // Update existing draft to submitted
       await db.prepare(`
         UPDATE applications 
-        SET essay_one = ?, essay_two = ?, experience_data = ?, needs_financial_aid = ?, is_draft = 0, submitted_at = CURRENT_TIMESTAMP, last_updated = CURRENT_TIMESTAMP
+        SET essay_one = ?, essay_two = ?, experience_data = ?, needs_financial_aid = ?, student_location = ?, is_draft = 0, submitted_at = CURRENT_TIMESTAMP, last_updated = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).bind(
         essayOne,
         essayTwo,
         experienceData,
         needsFinancialAidBool,
+        studentLocation,
         session.user.id
       ).run();
     } else {
       // Insert new application
       await db.prepare(`
-        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, needs_financial_aid, is_draft)
-        VALUES (?, ?, ?, ?, ?, 0)
+        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, needs_financial_aid, student_location, is_draft)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
       `).bind(
         session.user.id,
         essayOne,
         essayTwo,
         experienceData,
-        needsFinancialAidBool
+        needsFinancialAidBool,
+        studentLocation
       ).run();
     }
 

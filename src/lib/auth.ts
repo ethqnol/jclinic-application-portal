@@ -54,3 +54,18 @@ export async function isAdmin(email: string, db: any): Promise<boolean> {
   const admin = await db.prepare('SELECT id FROM admins WHERE email = ?').bind(email).first();
   return !!admin;
 }
+
+export async function isReviewer(email: string, db: any): Promise<boolean> {
+  const reviewer = await db.prepare('SELECT id FROM reviewers WHERE email = ?').bind(email).first();
+  return !!reviewer;
+}
+
+export async function getUserRole(email: string, db: any): Promise<'admin' | 'reviewer' | 'user'> {
+  const admin = await db.prepare('SELECT id FROM admins WHERE email = ?').bind(email).first();
+  if (admin) return 'admin';
+  
+  const reviewer = await db.prepare('SELECT id FROM reviewers WHERE email = ?').bind(email).first();
+  if (reviewer) return 'reviewer';
+  
+  return 'user';
+}

@@ -26,6 +26,7 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
     const firstName = formData.get('first_name') as string;
     const lastName = formData.get('last_name') as string;
     const preferredEmail = formData.get('preferred_email') as string;
+    const studentLocation = formData.get('student_location') as string;
     
     // Extract all form data (no validation required for drafts)
     const essayOne = formData.get('essay_one') as string;
@@ -63,7 +64,8 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
       grade_level: gradeLevel || null,
       needs_financial_aid: needsFinancialAid || null,
       clubs_activities: clubsActivities || null,
-      final_thoughts: finalThoughts || null
+      final_thoughts: finalThoughts || null,
+      student_location: studentLocation || null
     });
     
     // Convert financial aid to boolean for database (null if not set in draft)
@@ -86,26 +88,28 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
       // Update existing draft
       await db.prepare(`
         UPDATE applications 
-        SET essay_one = ?, essay_two = ?, experience_data = ?, needs_financial_aid = ?, last_updated = CURRENT_TIMESTAMP
+        SET essay_one = ?, essay_two = ?, experience_data = ?, needs_financial_aid = ?, student_location = ?, last_updated = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).bind(
         essayOne || '',
         essayTwo || '',
         experienceData,
         needsFinancialAidBool,
+        studentLocation,
         session.user.id
       ).run();
     } else {
       // Create new draft
       await db.prepare(`
-        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, needs_financial_aid, is_draft)
-        VALUES (?, ?, ?, ?, ?, 1)
+        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, needs_financial_aid, student_location, is_draft)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
       `).bind(
         session.user.id,
         essayOne || '',
         essayTwo || '',
         experienceData,
-        needsFinancialAidBool
+        needsFinancialAidBool,
+        studentLocation
       ).run();
     }
 
