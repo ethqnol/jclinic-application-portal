@@ -1,0 +1,395 @@
+---
+import { getSession, isAdmin } from '../../../lib/auth';
+
+const session = await getSession(Astro);
+
+if (!session) {
+  return Astro.redirect('/');
+}
+
+const db = Astro.locals.runtime?.env.DB;
+if (!db) {
+  return new Response('Database not available', { status: 500 });
+}
+
+// Check if user is admin
+const userIsAdmin = await isAdmin(session.user.email, db);
+if (!userIsAdmin) {
+  return new Response('Unauthorized', { status: 403 });
+}
+
+// Get application ID from URL
+const { id } = Astro.params;
+
+// Get specific application with user data
+const applicationResult = await db.prepare(`
+  SELECT 
+    a.id,
+    a.essay_one,
+    a.essay_two,
+    a.experience_data,
+    a.needs_financial_aid,
+    a.submitted_at,
+    a.is_draft,
+    u.name,
+    u.email,
+    u.first_name,
+    u.last_name,
+    u.preferred_email
+  FROM applications a
+  JOIN users u ON a.user_id = u.id
+  WHERE a.id = ? AND a.is_draft = 0
+`).bind(id).first();
+
+const application = applicationResult;
+
+if (!application) {
+  return new Response('Application not found', { status: 404 });
+}
+
+const experienceData = JSON.parse(application.experience_data);
+
+import Layout from '../../../layouts/Layout.astro';
+---
+
+<Layout title={`Application #${application.id} - Admin Portal`} session={session}>
+	<style>
+		.sidebar {
+			position: sticky;
+			top: 120px;
+			height: fit-content;
+		}
+		
+		.content-area {
+			min-height: 100vh;
+		}
+		
+		@media print {
+			@page {
+				margin: 0.5in;
+				size: letter;
+			}
+			
+			* {
+				background: white !important;
+				color: black !important;
+				box-shadow: none !important;
+				text-shadow: none !important;
+				border: none !important;
+			}
+			
+			body { 
+				font-family: 'Arial', sans-serif !important;
+				font-size: 10pt !important;
+				line-height: 1.4 !important;
+				color: black !important;
+				background: white !important;
+			}
+			
+			.main-content, .admin-section, .container {
+				max-width: none !important;
+				margin: 0 !important;
+				padding: 0 !important;
+				background: white !important;
+			}
+			
+			.no-print { 
+				display: none !important; 
+			}
+			
+			.content-grid {
+				display: block !important;
+			}
+			
+			.card {
+				border: none !important;
+				box-shadow: none !important;
+				margin-bottom: 12pt !important;
+				padding: 0 !important;
+				background: white !important;
+			}
+			
+			/* Contact Section - Clean and Simple */
+			h2 {
+				font-size: 14pt !important;
+				font-weight: bold !important;
+				margin-bottom: 6pt !important;
+				color: black !important;
+			}
+			
+			/* Sidebar - Clean List Format */
+			.sidebar {
+				background: white !important;
+				border: none !important;
+				padding: 0 !important;
+				margin-bottom: 16pt !important;
+				position: static !important;
+				width: 100% !important;
+			}
+			
+			.sidebar h3 {
+				font-size: 12pt !important;
+				font-weight: bold !important;
+				margin-bottom: 8pt !important;
+				color: black !important;
+				text-align: left !important;
+				border-bottom: 1pt solid black !important;
+				padding-bottom: 2pt !important;
+			}
+			
+			.sidebar span {
+				font-weight: bold !important;
+				font-size: 9pt !important;
+				color: black !important;
+			}
+			
+			.sidebar p {
+				font-size: 10pt !important;
+				margin: 1pt 0 4pt 0 !important;
+				color: black !important;
+			}
+			
+			/* Essay Sections - Clean and Minimal */
+			h3 {
+				font-size: 12pt !important;
+				font-weight: bold !important;
+				margin: 12pt 0 6pt 0 !important;
+				color: black !important;
+				border-bottom: 1pt solid black !important;
+				padding-bottom: 2pt !important;
+				page-break-after: avoid;
+			}
+			
+			/* Essay content styling */
+			.bg-gray-50 {
+				background: white !important;
+				border: none !important;
+				padding: 0 !important;
+				margin: 6pt 0 !important;
+				font-family: 'Arial', sans-serif !important;
+				font-size: 10pt !important;
+				line-height: 1.4 !important;
+				color: black !important;
+				white-space: pre-wrap !important;
+				page-break-after: always !important;
+			}
+			
+			/* Keep sidebar and contact info together */
+			.sidebar, .card:first-of-type {
+				page-break-after: avoid !important;
+			}
+			
+			/* Remove all decorative elements */
+			.bg-gray-100 {
+				background: white !important;
+			}
+			
+			/* Ensure all content is visible in print */
+			[style*="display: none"] {
+				display: block !important;
+			}
+		}
+	</style>
+
+	<script>
+		// Initialize all sections as collapsed
+		document.addEventListener('DOMContentLoaded', function() {
+			const sections = ['essay1', 'essay2', 'clubs', 'final'];
+			sections.forEach(sectionId => {
+				const content = document.getElementById(`${sectionId}-content`);
+				const toggle = document.getElementById(`${sectionId}-toggle`);
+				if (content && toggle) {
+					content.style.display = 'none';
+					toggle.textContent = '▶ Expand';
+				}
+			});
+		});
+
+		(window as any).toggleEssay = function(sectionId: string) {
+			const content = document.getElementById(`${sectionId}-content`);
+			const toggle = document.getElementById(`${sectionId}-toggle`);
+			
+			if (content && toggle) {
+				const isHidden = content.style.display === 'none';
+				content.style.display = isHidden ? 'block' : 'none';
+				toggle.textContent = isHidden ? '▼ Collapse' : '▶ Expand';
+			}
+		};
+
+		(window as any).expandOnClick = function(sectionId: string) {
+			const content = document.getElementById(`${sectionId}-content`);
+			const toggle = document.getElementById(`${sectionId}-toggle`);
+			
+			// Only expand if currently collapsed
+			if (content && toggle && content.style.display === 'none') {
+				content.style.display = 'block';
+				toggle.textContent = '▼ Collapse';
+			}
+		};
+	</script>
+	<main class="main-content">
+		<div class="admin-section">
+			<div class="container max-w-7xl">
+				<!-- Header with navigation -->
+				<div class="flex items-center gap-4 mb-6 no-print">
+					<a href="/admin" class="text-blue-600 hover:text-blue-800 flex items-center gap-2">
+						← Back to Applications
+					</a>
+					<div class="h-6 border-l border-gray-300"></div>
+					<h1 class="text-2xl font-bold text-gray-900">Application #{application.id}</h1>
+				</div>
+
+				<!-- Contact Info Card (Top of page) -->
+				<div class="card mb-6">
+					<div class="flex justify-between items-start">
+						<div>
+							<h2 class="text-xl font-semibold text-gray-900">{application.first_name} {application.last_name}</h2>
+							<p class="text-gray-600 mt-1">Google Account: {application.email}</p>
+							<p class="text-gray-600">Preferred Contact: {application.preferred_email}</p>
+						</div>
+						<div class="text-right">
+							<p class="text-sm text-gray-500">
+								Submitted: {new Date(application.submitted_at).toLocaleDateString()}
+							</p>
+							<p class="text-sm text-gray-500 no-print">
+								Time: {new Date(application.submitted_at).toLocaleTimeString()}
+							</p>
+						</div>
+					</div>
+				</div>
+
+				<!-- Main Content Grid -->
+				<div class="content-grid grid grid-cols-1 lg:grid-cols-4 gap-6">
+					<!-- Sidebar -->
+					<div class="lg:col-span-1">
+						<div class="sidebar">
+							<div class="card">
+								<h3 class="text-lg font-semibold text-gray-900 mb-4">General Information</h3>
+								<div class="space-y-4">
+									<div>
+										<span class="font-medium text-gray-900 block">Programming Experience</span>
+										<p class="text-gray-700">{experienceData.programming_experience}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Programming Languages</span>
+										<p class="text-gray-700">{experienceData.languages.join(', ') || 'None'}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Research Experience</span>
+										<p class="text-gray-700">{experienceData.research_experience}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Grade Level</span>
+										<p class="text-gray-700">{experienceData.grade_level}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Financial Aid</span>
+										<span class={application.needs_financial_aid ? 'text-orange-600 font-medium' : 'text-gray-700'}>
+											{application.needs_financial_aid ? 'Yes - Requested' : 'No'}
+										</span>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Main Content Area -->
+					<div class="lg:col-span-3 content-area">
+
+						<!-- Essays Section -->
+						<div class="space-y-6">
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('essay1')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Essay 1: Background & Experience</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('essay1')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="essay1-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="essay1-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{application.essay_one}
+								</div>
+							</div>
+
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('essay2')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Essay 2: Interest & Goals</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('essay2')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="essay2-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="essay2-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{application.essay_two}
+								</div>
+							</div>
+						</div>
+
+						<!-- Additional Information -->
+						<div class="space-y-6 mt-6">
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('clubs')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Clubs & Activities</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('clubs')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="clubs-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="clubs-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{experienceData.clubs_activities}
+								</div>
+							</div>
+
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('final')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Final Thoughts</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('final')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="final-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="final-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{experienceData.final_thoughts}
+								</div>
+							</div>
+						</div>
+
+						<!-- Action Buttons -->
+						<div class="flex gap-4 mt-8 pt-6 border-t no-print">
+							<a href="/admin" class="btn btn-secondary">
+								← Back to All Applications
+							</a>
+							<button onclick="window.print()" class="btn btn-primary">
+								🖨️ Print Application
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</main>
+</Layout>
