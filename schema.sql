@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS applications (
   is_draft BOOLEAN DEFAULT 1,
   submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+  assigned_to TEXT, -- Email of admin assigned to review
+  review_status TEXT DEFAULT 'unassigned', -- unassigned, assigned, in_review, completed
+  assigned_at DATETIME,
+  reviewed_at DATETIME,
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 

@@ -32,6 +32,10 @@ const applications = await db.prepare(`
     a.needs_financial_aid,
     a.submitted_at,
     a.is_draft,
+    a.assigned_to,
+    a.review_status,
+    a.assigned_at,
+    a.reviewed_at,
     u.name,
     u.email,
     u.first_name,
@@ -42,6 +46,9 @@ const applications = await db.prepare(`
   WHERE a.is_draft = 0
   ORDER BY a.submitted_at DESC
 `).all();
+
+// Get all admin users for assignment dropdown
+const admins = await db.prepare('SELECT email FROM admins ORDER BY email').all();
 
 import Layout from '../layouts/Layout.astro';
 ---
@@ -80,6 +87,9 @@ import Layout from '../layouts/Layout.astro';
 			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
 				<h2>Applications ({applications.results?.length || 0})</h2>
 				<div style="display: flex; gap: 1rem;">
+					<a href="/admin/review" class="btn btn-primary">
+						📋 My Review Queue
+					</a>
 					<a href="/api/export-csv" class="btn btn-secondary">
 						Export to CSV
 					</a>
@@ -89,34 +99,101 @@ import Layout from '../layouts/Layout.astro';
 				</div>
 			</div>
 
+			<!-- Assignment Controls -->
+			{applications.results && applications.results.length > 0 && (
+				<div class="card mb-4">
+					<div class="flex flex-wrap items-center gap-4">
+						<div class="flex items-center gap-2">
+							<input type="checkbox" id="selectAll" class="rounded">
+							<label for="selectAll" class="text-sm font-medium">Select All</label>
+						</div>
+						
+						<div class="flex items-center gap-2">
+							<select id="assignToSelect" class="px-3 py-1 border border-gray-300 rounded text-sm">
+								<option value="">Select admin...</option>
+								{admins.results?.map((admin: any) => (
+									<option value={admin.email}>{admin.email}</option>
+								))}
+							</select>
+							<button id="assignSelectedBtn" class="btn btn-secondary text-sm px-3 py-1" disabled>
+								Assign Selected
+							</button>
+						</div>
+
+						<button id="autoAssignBtn" class="btn btn-primary text-sm px-3 py-1">
+							🎯 Auto-Assign All
+						</button>
+
+						<div class="ml-auto text-sm text-gray-600">
+							<span id="selectedCount">0</span> selected
+						</div>
+					</div>
+				</div>
+			)}
+
 			{applications.results && applications.results.length > 0 ? (
 				<div class="space-y-1">
 					{applications.results.map((app: any) => {
+						const statusColors = {
+							'unassigned': 'border-gray-400',
+							'assigned': 'border-orange-500',
+							'in_review': 'border-blue-500', 
+							'completed': 'border-green-500'
+						};
+						const statusTexts = {
+							'unassigned': '⚪ Unassigned',
+							'assigned': '🟡 Assigned',
+							'in_review': '🔵 In Review',
+							'completed': '🟢 Completed'
+						};
+						
 						return (
 							<div 
-								class="card hover:shadow-lg transition-shadow cursor-pointer border-l-4 border-blue-500"
-								onclick={`window.location.href='/admin/application/${app.id}'`}
+								class={`card hover:shadow-lg transition-shadow border-l-4 ${statusColors[app.review_status] || 'border-gray-400'}`}
 							>
-								<div class="flex justify-between items-center">
-									<div class="flex-1">
-										<h3 class="text-lg font-semibold text-gray-900 mb-0.5">
-											{app.first_name} {app.last_name}
-										</h3>
-										<p class="text-gray-600 text-sm mb-0.5">
-											{app.preferred_email || app.email}
-										</p>
-										{app.needs_financial_aid && (
-											<span class="inline-block bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded-full">
-												Financial Aid Requested
-											</span>
-										)}
-									</div>
-									<div class="text-right">
-										<p class="text-sm font-medium text-gray-900">Application #{app.id}</p>
-										<p class="text-sm text-gray-500">
-											{new Date(app.submitted_at).toLocaleDateString()}
-										</p>
-										<p class="text-xs text-blue-600 mt-0.5">Click to view details →</p>
+								<div class="flex items-center gap-3">
+									<input 
+										type="checkbox" 
+										class="app-checkbox rounded" 
+										data-app-id={app.id}
+										onclick="event.stopPropagation()"
+									>
+									<div 
+										class="flex-1 cursor-pointer"
+										onclick={`window.location.href='/admin/application/${app.id}'`}
+									>
+										<div class="flex justify-between items-center">
+											<div class="flex-1">
+												<h3 class="text-lg font-semibold text-gray-900 mb-0.5">
+													{app.first_name} {app.last_name}
+												</h3>
+												<p class="text-gray-600 text-sm mb-0.5">
+													{app.preferred_email || app.email}
+												</p>
+												<div class="flex items-center gap-3">
+													<span class="text-sm font-medium">
+														{statusTexts[app.review_status] || '⚪ Unknown'}
+													</span>
+													{app.assigned_to && (
+														<span class="text-xs text-gray-500">
+															→ {app.assigned_to}
+														</span>
+													)}
+													{app.needs_financial_aid && (
+														<span class="inline-block bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded-full">
+															Financial Aid Requested
+														</span>
+													)}
+												</div>
+											</div>
+											<div class="text-right">
+												<p class="text-sm font-medium text-gray-900">Application #{app.id}</p>
+												<p class="text-sm text-gray-500">
+													{new Date(app.submitted_at).toLocaleDateString()}
+												</p>
+												<p class="text-xs text-blue-600 mt-0.5">Click to view details →</p>
+											</div>
+										</div>
 									</div>
 								</div>
 							</div>
@@ -233,6 +310,154 @@ import Layout from '../layouts/Layout.astro';
 						}
 					});
 				}
+
+				// Assignment controls functionality
+				const selectAllCheckbox = document.getElementById('selectAll') as HTMLInputElement;
+				const appCheckboxes = document.querySelectorAll('.app-checkbox') as NodeListOf<HTMLInputElement>;
+				const assignSelectedBtn = document.getElementById('assignSelectedBtn') as HTMLButtonElement;
+				const assignToSelect = document.getElementById('assignToSelect') as HTMLSelectElement;
+				const autoAssignBtn = document.getElementById('autoAssignBtn') as HTMLButtonElement;
+				const selectedCountSpan = document.getElementById('selectedCount') as HTMLSpanElement;
+
+				// Update selected count and button state
+				function updateAssignmentControls() {
+					const selectedCount = document.querySelectorAll('.app-checkbox:checked').length;
+					selectedCountSpan.textContent = selectedCount.toString();
+					
+					const hasSelection = selectedCount > 0;
+					const hasAdminSelected = assignToSelect.value !== '';
+					assignSelectedBtn.disabled = !hasSelection || !hasAdminSelected;
+				}
+
+				// Select all functionality
+				if (selectAllCheckbox) {
+					selectAllCheckbox.addEventListener('change', function() {
+						appCheckboxes.forEach(checkbox => {
+							checkbox.checked = this.checked;
+						});
+						updateAssignmentControls();
+					});
+				}
+
+				// Individual checkbox functionality
+				appCheckboxes.forEach(checkbox => {
+					checkbox.addEventListener('change', function() {
+						// Update select all checkbox state
+						const allChecked = document.querySelectorAll('.app-checkbox:checked').length === appCheckboxes.length;
+						const someChecked = document.querySelectorAll('.app-checkbox:checked').length > 0;
+						
+						if (selectAllCheckbox) {
+							selectAllCheckbox.checked = allChecked;
+							selectAllCheckbox.indeterminate = someChecked && !allChecked;
+						}
+						
+						updateAssignmentControls();
+					});
+				});
+
+				// Admin selection change
+				if (assignToSelect) {
+					assignToSelect.addEventListener('change', updateAssignmentControls);
+				}
+
+				// Assign selected applications
+				if (assignSelectedBtn) {
+					assignSelectedBtn.addEventListener('click', async function() {
+						const selectedApps = Array.from(document.querySelectorAll('.app-checkbox:checked'))
+							.map(checkbox => parseInt((checkbox as HTMLInputElement).dataset.appId || '0'))
+							.filter(id => id > 0);
+						
+						const assignToEmail = assignToSelect.value;
+
+						if (selectedApps.length === 0) {
+							alert('Please select applications to assign.');
+							return;
+						}
+
+						if (!assignToEmail) {
+							alert('Please select an admin to assign to.');
+							return;
+						}
+
+						if (!confirm(`Assign ${selectedApps.length} applications to ${assignToEmail}?`)) {
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Assigning...';
+
+						try {
+							const response = await fetch('/api/admin/assign-applications', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								},
+								body: JSON.stringify({
+									applicationIds: selectedApps,
+									assignToEmail: assignToEmail,
+									action: 'manual'
+								})
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error assigning applications. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+						}
+					});
+				}
+
+				// Auto-assign functionality
+				if (autoAssignBtn) {
+					autoAssignBtn.addEventListener('click', async function() {
+						if (!confirm('This will automatically assign all unassigned applications evenly among all admins. Continue?')) {
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Auto-assigning...';
+
+						try {
+							const response = await fetch('/api/admin/assign-applications', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								},
+								body: JSON.stringify({
+									action: 'auto_assign'
+								})
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error auto-assigning applications. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+						}
+					});
+				}
+
+				// Initial state
+				updateAssignmentControls();
 			});
 		</script>
 	</main>
