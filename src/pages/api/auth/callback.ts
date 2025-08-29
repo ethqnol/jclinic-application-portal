@@ -70,17 +70,23 @@ export const GET: APIRoute = async ({ url, redirect, locals, cookies }) => {
       return redirect('/?error=db_error');
     }
 
+    // Split the Google name into first and last name as best we can
+    const nameParts = userInfo.name.split(' ');
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+
     // First try to insert the user (if new)
     try {
       await db.prepare(`
-        INSERT INTO users (email, name)
-        VALUES (?, ?)
-      `).bind(userInfo.email, userInfo.name).run();
+        INSERT INTO users (email, name, first_name, last_name, preferred_email)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(userInfo.email, userInfo.name, firstName, lastName, userInfo.email).run();
     } catch (error) {
-      // If user already exists, update their name
+      // If user already exists, update their info
       await db.prepare(`
-        UPDATE users SET name = ? WHERE email = ?
-      `).bind(userInfo.name, userInfo.email).run();
+        UPDATE users SET name = ?, first_name = ?, last_name = ?, preferred_email = ?
+        WHERE email = ?
+      `).bind(userInfo.name, firstName, lastName, userInfo.email, userInfo.email).run();
     }
 
     const user = await db.prepare('SELECT * FROM users WHERE email = ?').bind(userInfo.email).first();
@@ -91,6 +97,9 @@ export const GET: APIRoute = async ({ url, redirect, locals, cookies }) => {
         id: user.id.toString(),
         email: user.email,
         name: user.name,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        preferred_email: user.preferred_email,
       }
     };
 

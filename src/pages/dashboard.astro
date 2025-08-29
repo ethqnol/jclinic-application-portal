@@ -1,6 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { getSession } from '../lib/auth';
+import { getApplicationStatus } from '../lib/application-status';
 
 const session = await getSession(Astro);
 
@@ -11,6 +12,9 @@ if (!session) {
 // Check if user has already submitted an application
 const db = Astro.locals.runtime?.env.DB;
 let existingApplication = null;
+
+// Check if applications are open
+const applicationsOpen = db ? await getApplicationStatus(db) : true;
 
 if (db) {
   existingApplication = await db.prepare('SELECT * FROM applications WHERE user_id = ?')
@@ -25,12 +29,15 @@ if (db) {
 			<div class="container">
 				{existingApplication && !existingApplication.is_draft ? (
 				<div class="max-w-2xl mx-auto">
-					<div class="alert alert-success">
-						<h2 style="color: #16a34a; margin-bottom: 1rem;">Application Submitted!</h2>
+					<div class="alert alert-success custom-dot" style="text-align: center;">
+						<div style="display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 1rem;">
+							<div style="width: 20px; height: 20px; border-radius: 50%; background-color: var(--success-color); flex-shrink: 0; display: flex; align-items: center; justify-content: center;"></div>
+							<h2 style="color: #16a34a; margin: 0; line-height: 1.2;">Application Submitted!</h2>
+						</div>
 						<p style="color: #16a34a; margin-bottom: 1rem;">
 							Thank you for submitting your application. We have received your submission on {new Date(existingApplication.submitted_at).toLocaleDateString()}.
 						</p>
-						<p style="color: #16a34a;">
+						<p style="color: #16a34a; margin: 0;">
 							We will review your application and get back to you soon.
 						</p>
 					</div>
@@ -53,6 +60,21 @@ if (db) {
 								Start Fresh
 							</button>
 						</div>
+					</div>
+				</div>
+			) : !applicationsOpen ? (
+				<div class="max-w-2xl mx-auto">
+					<div class="card" style="background: #fef3cd; border: 2px solid #f59e0b;">
+						<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+							<span style="font-size: 2rem;">🔒</span>
+							<h2 style="color: #92400e; margin: 0;">Applications Currently Closed</h2>
+						</div>
+						<p style="color: #92400e; margin-bottom: 1rem;">
+							Thank you for your interest in the JClinic Bootcamp! New applications are not currently being accepted.
+						</p>
+						<p style="color: #92400e; margin: 0; font-size: 0.875rem;">
+							Applications will reopen soon. Please check back later.
+						</p>
 					</div>
 				</div>
 			) : (

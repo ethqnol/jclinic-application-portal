@@ -22,6 +22,12 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
   try {
     const formData = await request.formData();
     
+    // Extract personal information
+    const firstName = formData.get('first_name') as string;
+    const lastName = formData.get('last_name') as string;
+    const preferredEmail = formData.get('preferred_email') as string;
+    const studentLocation = formData.get('student_location') as string;
+    
     // Extract all form data (no validation required for drafts)
     const essayOne = formData.get('essay_one') as string;
     const essayTwo = formData.get('essay_two') as string;
@@ -29,8 +35,18 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
     const languages = formData.getAll('languages');
     const researchExperience = formData.get('research_experience') as string;
     const gradeLevel = formData.get('grade_level') as string;
+    const needsFinancialAid = formData.get('needs_financial_aid') as string;
     const clubsActivities = formData.get('clubs_activities') as string;
     const finalThoughts = formData.get('final_thoughts') as string;
+
+    // Update user's personal information if provided
+    if (firstName && lastName && preferredEmail) {
+      await db.prepare(`
+        UPDATE users 
+        SET first_name = ?, last_name = ?, preferred_email = ?, name = ?
+        WHERE id = ?
+      `).bind(firstName, lastName, preferredEmail, `${firstName} ${lastName}`, session.user.id).run();
+    }
     
     // Debug specific fields that aren't working
     console.log('Debug form extraction:', {
@@ -46,9 +62,14 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
       languages: languages || [],
       research_experience: researchExperience || null,
       grade_level: gradeLevel || null,
+      needs_financial_aid: needsFinancialAid || null,
       clubs_activities: clubsActivities || null,
-      final_thoughts: finalThoughts || null
+      final_thoughts: finalThoughts || null,
+      student_location: studentLocation || null
     });
+    
+    // Convert financial aid to boolean for database (null if not set in draft)
+    const needsFinancialAidBool = needsFinancialAid ? (needsFinancialAid === 'yes') : null;
 
     // Check if user already has a draft or submitted application
     const existing = await db.prepare('SELECT id, is_draft FROM applications WHERE user_id = ?')
@@ -67,24 +88,28 @@ export const POST: APIRoute = async ({ request, locals, cookies }) => {
       // Update existing draft
       await db.prepare(`
         UPDATE applications 
-        SET essay_one = ?, essay_two = ?, experience_data = ?, last_updated = CURRENT_TIMESTAMP
+        SET essay_one = ?, essay_two = ?, experience_data = ?, needs_financial_aid = ?, student_location = ?, last_updated = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).bind(
         essayOne || '',
         essayTwo || '',
         experienceData,
+        needsFinancialAidBool,
+        studentLocation,
         session.user.id
       ).run();
     } else {
       // Create new draft
       await db.prepare(`
-        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, is_draft)
-        VALUES (?, ?, ?, ?, 1)
+        INSERT INTO applications (user_id, essay_one, essay_two, experience_data, needs_financial_aid, student_location, is_draft)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
       `).bind(
         session.user.id,
         essayOne || '',
         essayTwo || '',
-        experienceData
+        experienceData,
+        needsFinancialAidBool,
+        studentLocation
       ).run();
     }
 

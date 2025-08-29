@@ -26,9 +26,13 @@ export const GET: APIRoute = async ({ locals, cookies }) => {
         a.id,
         u.name,
         u.email,
+        u.first_name,
+        u.last_name,
+        u.preferred_email,
         a.essay_one,
         a.essay_two,
         a.experience_data,
+        a.needs_financial_aid,
         a.submitted_at
       FROM applications a
       JOIN users u ON a.user_id = u.id
@@ -43,13 +47,16 @@ export const GET: APIRoute = async ({ locals, cookies }) => {
     // Create CSV content
     const headers = [
       'Application ID',
-      'Name',
-      'Email',
+      'First Name',
+      'Last Name',
+      'Google Email',
+      'Preferred Email',
       'Submitted Date',
       'Programming Experience',
       'Languages',
       'Research Experience',
       'Grade Level',
+      'Financial Aid Needed',
       'Clubs & Activities',
       'Final Thoughts',
       'Essay 1 (Interests & Background)',
@@ -62,17 +69,20 @@ export const GET: APIRoute = async ({ locals, cookies }) => {
       const experienceData = JSON.parse(app.experience_data);
       const row = [
         app.id,
-        `"${app.name.replace(/"/g, '""')}"`,
+        `"${app.first_name?.replace(/"/g, '""') || ''}"`,
+        `"${app.last_name?.replace(/"/g, '""') || ''}"`,
         app.email,
+        app.preferred_email,
         new Date(app.submitted_at).toLocaleDateString(),
         experienceData.programming_experience,
-        `"${experienceData.languages.join(', ')}"`,
+        `"${experienceData.languages?.join(', ') || 'None'}"`,
         experienceData.research_experience,
         experienceData.grade_level || experienceData.academic_year, // Handle both field names for backward compatibility
-        `"${experienceData.clubs_activities.replace(/"/g, '""')}"`,
-        `"${experienceData.final_thoughts.replace(/"/g, '""')}"`,
-        `"${app.essay_one.replace(/"/g, '""')}"`,
-        `"${app.essay_two.replace(/"/g, '""')}"`
+        app.needs_financial_aid ? 'Yes' : 'No',
+        `"${experienceData.clubs_activities?.replace(/"/g, '""') || ''}"`,
+        `"${experienceData.final_thoughts?.replace(/"/g, '""') || ''}"`,
+        `"${app.essay_one?.replace(/"/g, '""') || ''}"`,
+        `"${app.essay_two?.replace(/"/g, '""') || ''}"`
       ];
       csvContent += row.join(',') + '\n';
     });

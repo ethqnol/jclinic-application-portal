@@ -1,0 +1,253 @@
+---
+import { getSession, getUserRole } from '../../lib/auth';
+
+const session = await getSession(Astro);
+
+if (!session) {
+  return Astro.redirect('/');
+}
+
+const db = Astro.locals.runtime?.env.DB;
+if (!db) {
+  return new Response('Database not available', { status: 500 });
+}
+
+// Check if user is admin or reviewer
+const userRole = await getUserRole(session.user.email, db);
+if (userRole !== 'admin' && userRole !== 'reviewer') {
+  return new Response('Unauthorized', { status: 403 });
+}
+
+// Get applications assigned to this admin
+const assignedApplications = await db.prepare(`
+  SELECT 
+    a.id,
+    a.review_status,
+    a.assigned_at,
+    a.reviewed_at,
+    a.reviewer_grade,
+    u.name,
+    u.email,
+    u.first_name,
+    u.last_name,
+    u.preferred_email,
+    a.submitted_at,
+    a.needs_financial_aid
+  FROM applications a
+  JOIN users u ON a.user_id = u.id
+  WHERE a.assigned_to = ? AND a.is_draft = 0
+  ORDER BY a.assigned_at ASC
+`).bind(session.user.email).all();
+
+import Layout from '../../layouts/Layout.astro';
+---
+
+<Layout title="My Review Queue - Application Portal" session={session} userRole={userRole}>
+	<main class="main-content">
+		<div class="review-section">
+			<div class="container">
+				<!-- Header -->
+				<div class="flex items-center gap-4 mb-6">
+					<h1 class="text-2xl font-bold text-gray-900">Review Queue</h1>
+				</div>
+
+				<!-- Stats -->
+				<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+					<div class="bg-white p-4 rounded-lg border border-gray-200">
+						<div class="text-2xl font-bold text-gray-900">{assignedApplications.results?.length || 0}</div>
+						<div class="text-sm text-gray-600">Total Assigned</div>
+					</div>
+					<div class="bg-white p-4 rounded-lg border border-gray-200">
+						<div class="text-2xl font-bold text-orange-600">
+							{assignedApplications.results?.filter((app: any) => app.review_status === 'assigned').length || 0}
+						</div>
+						<div class="text-sm text-gray-600">Not Started</div>
+					</div>
+					<div class="bg-white p-4 rounded-lg border border-gray-200">
+						<div class="text-2xl font-bold text-blue-600">
+							{assignedApplications.results?.filter((app: any) => app.review_status === 'in_review').length || 0}
+						</div>
+						<div class="text-sm text-gray-600">In Review</div>
+					</div>
+					<div class="bg-white p-4 rounded-lg border border-gray-200">
+						<div class="text-2xl font-bold text-green-600">
+							{assignedApplications.results?.filter((app: any) => app.review_status === 'completed').length || 0}
+						</div>
+						<div class="text-sm text-gray-600">Completed</div>
+					</div>
+				</div>
+
+				<!-- Applications -->
+				{assignedApplications.results && assignedApplications.results.length > 0 ? (
+					<div class="space-y-2 mb-6">
+						{assignedApplications.results.map((app: any) => {
+							const statusColors = {
+								'assigned': 'border-red-500 bg-red-50',
+								'in_review': 'border-yellow-500 bg-yellow-50', 
+								'completed': 'border-green-500 bg-green-50'
+							} as const;
+							const statusTexts = {
+								'assigned': '🔴 Not Started',
+								'in_review': '🟡 In Review',
+								'completed': '🟢 Completed'
+							} as const;
+							
+							return (
+								<div 
+									class={`card hover:shadow-lg transition-shadow cursor-pointer border-l-4 ${statusColors[app.review_status as keyof typeof statusColors] || 'border-gray-500'}`}
+									onclick={`window.location.href='/review/application/${app.id}'`}
+								>
+									<div class="flex justify-between items-center p-2">
+										<div class="flex-1">
+											<h3 class="text-base font-semibold text-gray-900 mb-0.5">
+												{app.first_name} {app.last_name}
+											</h3>
+											<p class="text-gray-600 text-xs mb-0.5">
+												{app.preferred_email || app.email}
+											</p>
+											<div class="flex items-center gap-2 mt-1">
+												<span class="text-xs font-medium">
+													{statusTexts[app.review_status as keyof typeof statusTexts] || '⚪ Unknown'}
+												</span>
+												{app.review_status === 'completed' && app.reviewer_grade && (
+													<span class={`inline-block text-xs px-2 py-0.5 rounded-full font-semibold ${
+														app.reviewer_grade >= 4 ? 'bg-green-100 text-green-800' :
+														app.reviewer_grade === 3 ? 'bg-yellow-100 text-yellow-800' :
+														'bg-red-100 text-red-800'
+													}`}>
+														Grade: {app.reviewer_grade}/5
+													</span>
+												)}
+												{app.needs_financial_aid && (
+													<span class="inline-block bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded-full">
+														Financial Aid Requested
+													</span>
+												)}
+											</div>
+										</div>
+										<div class="flex flex-col items-end gap-2">
+											<div class="text-right">
+												<p class="text-xs font-medium text-gray-900">App #{app.id}</p>
+												<p class="text-xs text-gray-500">
+													Submitted: {new Date(app.submitted_at).toLocaleDateString()}
+												</p>
+												{app.assigned_at && (
+													<p class="text-xs text-gray-400">
+														Assigned: {new Date(app.assigned_at).toLocaleDateString()}
+													</p>
+												)}
+											</div>
+											<div class="flex gap-2">
+												{app.review_status === 'assigned' && (
+													<button 
+														onclick={`event.stopPropagation(); startReview(${app.id})`}
+														class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2 py-1 rounded transition-colors"
+													>
+														Start Review
+													</button>
+												)}
+												{app.review_status === 'in_review' && (
+													<button 
+														onclick={`event.stopPropagation(); completeReview(${app.id})`}
+														class="bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1 rounded transition-colors"
+													>
+														Complete Review
+													</button>
+												)}
+												{app.review_status === 'completed' && (
+													<button 
+														onclick={`event.stopPropagation(); uncompleteReview(${app.id})`}
+														class="bg-orange-600 hover:bg-orange-700 text-white text-xs px-2 py-1 rounded transition-colors"
+													>
+														Reopen Review
+													</button>
+												)}
+											</div>
+										</div>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+				) : (
+					<div class="text-center py-12">
+						<div class="card">
+							<div class="text-gray-500 text-lg mb-4">📋</div>
+							<h3 class="text-lg font-medium text-gray-900 mb-2">No Applications Assigned</h3>
+							<p class="text-gray-600">You don't have any applications assigned for review yet.</p>
+						</div>
+					</div>
+				)}
+			</div>
+		</div>
+	</main>
+
+	<script>
+		declare global {
+			interface Window {
+				startReview: (appId: number) => Promise<void>;
+				completeReview: (appId: number) => Promise<void>;
+				uncompleteReview: (appId: number) => Promise<void>;
+			}
+		}
+
+		window.startReview = async function(appId: number) {
+			try {
+				const response = await fetch('/api/admin/update-review-status', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						applicationId: appId,
+						status: 'in_review'
+					})
+				});
+
+				if (response.ok) {
+					location.reload();
+				} else {
+					const result = await response.json();
+					alert(`Error: ${result.error}`);
+				}
+			} catch (error) {
+				alert('Error updating review status. Please try again.');
+			}
+		}
+
+		window.completeReview = async function(appId: number) {
+			// Redirect to detail page where grade and comments can be added
+			if (confirm('To complete a review, you need to add a grade and comments. Go to the application detail page?')) {
+				window.location.href = `/review/application/${appId}`;
+			}
+		}
+
+		window.uncompleteReview = async function(appId: number) {
+			if (!confirm('Are you sure you want to reopen this application for review?')) {
+				return;
+			}
+
+			try {
+				const response = await fetch('/api/admin/update-review-status', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						applicationId: appId,
+						status: 'in_review'
+					})
+				});
+
+				if (response.ok) {
+					location.reload();
+				} else {
+					const result = await response.json();
+					alert(`Error: ${result.error}`);
+				}
+			} catch (error) {
+				alert('Error updating review status. Please try again.');
+			}
+		}
+	</script>
+</Layout>

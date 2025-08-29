@@ -1,6 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { getSession } from '../lib/auth';
+import { getApplicationStatus } from '../lib/application-status';
 
 const session = await getSession(Astro);
 
@@ -11,15 +12,40 @@ if (!session) {
 // Check if user has already submitted an application or has a draft
 const db = Astro.locals.runtime?.env.DB;
 let existingApplication = null;
+let currentUser = session.user;
+
+// Check if applications are open
+const applicationsOpen = db ? await getApplicationStatus(db) : true;
 
 if (db) {
   existingApplication = await db.prepare('SELECT * FROM applications WHERE user_id = ?')
     .bind(session.user.id)
     .first();
+  
+  // Get the most up-to-date user information from the database
+  const dbUser = await db.prepare('SELECT * FROM users WHERE id = ?')
+    .bind(session.user.id)
+    .first();
+  
+  if (dbUser) {
+    currentUser = {
+      id: dbUser.id.toString(),
+      email: dbUser.email,
+      name: dbUser.name,
+      first_name: dbUser.first_name,
+      last_name: dbUser.last_name,
+      preferred_email: dbUser.preferred_email,
+    };
+  }
 }
 
 if (existingApplication && !existingApplication.is_draft) {
   return Astro.redirect('/dashboard');
+}
+
+// If applications are closed and user doesn't have a draft, redirect to closed page
+if (!applicationsOpen && !existingApplication) {
+  return Astro.redirect('/applications-closed');
 }
 
 // Parse existing draft data if available
@@ -40,7 +66,112 @@ if (existingApplication && existingApplication.is_draft) {
 			<div class="max-w-4xl mx-auto">
 				<h2>Application Form</h2>
 				
+				<!-- Program Information Notice -->
+				<div class="card" style="background: #e0f2fe; border: 1px solid #0369a1; margin-bottom: 1.5rem;">
+					<div style="display: flex; align-items: center; gap: 0.75rem;">
+						<span style="font-size: 1.5rem;">ℹ️</span>
+						<div>
+							<p style="color: #0369a1; margin: 0; font-weight: 600;">Program Information</p>
+							<p style="color: #0369a1; margin: 0.25rem 0 0 0; font-size: 0.875rem;">
+								Please note: This summer program is <strong>not residential</strong>. Students will commute daily to the program location.
+							</p>
+						</div>
+					</div>
+				</div>
+				
+				{!applicationsOpen && (
+					<div class="card" style="background: #fef3cd; border: 1px solid #f59e0b; margin-bottom: 1.5rem;">
+						<div style="display: flex; align-items: center; gap: 0.75rem;">
+							<span style="font-size: 1.5rem;">⚠️</span>
+							<div>
+								<p style="color: #92400e; margin: 0; font-weight: 600;">Applications Currently Closed</p>
+								<p style="color: #92400e; margin: 0.25rem 0 0 0; font-size: 0.875rem;">
+									You can still edit and save your draft, but submissions are not currently being accepted.
+								</p>
+							</div>
+						</div>
+					</div>
+				)}
+				
+				<!-- Recommendation Letter Information -->
+				<div style="background: #f0f9ff; border: 1px solid #0284c7; border-radius: 8px; padding: 0.75rem; margin-bottom: 1.5rem;">
+					<div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+						<span style="font-size: 1.1rem;">📧</span>
+						<h4 style="color: #0284c7; margin: 0; font-size: 0.9rem; font-weight: 600;">Recommendation Letter (Optional)</h4>
+					</div>
+					<p style="color: #0369a1; margin: 0; font-size: 0.8rem; line-height: 1.4;">
+						Have your teacher email a PDF/DOCX to <strong>wuethan@mit.edu</strong> with:<br>
+						<span style="margin-left: 0.5rem;">• File name: </span><code style="background: rgba(2, 132, 199, 0.15); padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.75rem;">&lt;lastname&gt;-&lt;firstname&gt;-bootcamp-rec-letter</code><br>
+						<span style="margin-left: 0.5rem;">• Subject: </span><strong>"Your Last Name, Your First Name Bootcamp Recommendation Letter"</strong>
+					</p>
+				</div>
+				
 				<form method="POST" action="/api/submit-application">
+					<!-- Personal Information -->
+					<div class="card">
+						<h3>Personal Information</h3>
+						
+						<div class="form-group">
+							<label for="first_name">
+								First Name *
+							</label>
+							<input 
+								type="text" 
+								id="first_name" 
+								name="first_name" 
+								required 
+								maxlength="50"
+								value={currentUser.first_name || ''}
+								placeholder="Enter your first name" />
+						</div>
+
+						<div class="form-group">
+							<label for="last_name">
+								Last Name *
+							</label>
+							<input 
+								type="text" 
+								id="last_name" 
+								name="last_name" 
+								required 
+								maxlength="50"
+								value={currentUser.last_name || ''}
+								placeholder="Enter your last name" />
+						</div>
+
+						<div class="form-group">
+							<label for="preferred_email">
+								Preferred Email Address *
+							</label>
+							<input 
+								type="email" 
+								id="preferred_email" 
+								name="preferred_email" 
+								required 
+								maxlength="100"
+								value={currentUser.preferred_email || ''}
+								placeholder="Enter your preferred email address" />
+							<p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+								This is the email address we'll use to contact you about your application.
+							</p>
+						</div>
+
+						<div class="form-group">
+							<label for="student_location">
+								Student Location *
+							</label>
+							<select id="student_location" name="student_location" required>
+								<option value="">Select your location</option>
+								<option value="massachusetts" selected={existingApplication?.student_location === 'massachusetts' || draftData?.student_location === 'massachusetts'}>Massachusetts</option>
+								<option value="out_of_state" selected={existingApplication?.student_location === 'out_of_state' || draftData?.student_location === 'out_of_state'}>Out of State</option>
+								<option value="international" selected={existingApplication?.student_location === 'international' || draftData?.student_location === 'international'}>International</option>
+							</select>
+							<p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+								Please indicate if you are based in Massachusetts, another US state, or international.
+							</p>
+						</div>
+					</div>
+
 					<!-- Essay Questions -->
 					<div class="card">
 						<h3>Essay Questions</h3>
@@ -100,7 +231,8 @@ if (existingApplication && existingApplication.is_draft) {
 								Which programming languages are you familiar with? (Select all that apply)
 							</label>
 							<div class="checkbox-grid">
-								{['JavaScript', 'Python', 'Java', 'C++', 'Go', 'Rust', 'TypeScript', 'PHP', 'Other'].map((lang) => (
+
+								{['JavaScript', 'Python', 'Java', 'JS/TS', 'C++', 'Rust', 'Other'].map((lang) => (
 								<label class="checkbox-item">
 									<input
 									type="checkbox"
@@ -165,6 +297,20 @@ if (existingApplication && existingApplication.is_draft) {
 							</select>
 						</div>
 
+						<div class="form-group">
+							<label>Do you need financial aid?</label>
+							<div style="margin-top: 0.5rem;">
+								<div class="radio-item" style="margin-bottom: 0.5rem;">
+									<input type="radio" name="needs_financial_aid" value="yes" checked={existingApplication?.needs_financial_aid === 1 || draftData?.needs_financial_aid === 'yes'} required />
+									<span>Yes, I need financial aid</span>
+								</div>
+								<div class="radio-item">
+									<input type="radio" name="needs_financial_aid" value="no" checked={existingApplication?.needs_financial_aid === 0 || draftData?.needs_financial_aid === 'no'} required />
+									<span>No, I do not need financial aid</span>
+								</div>
+							</div>
+						</div>
+
 
 						<div class="form-group">
 							<label for="clubs_activities">
@@ -200,8 +346,14 @@ if (existingApplication && existingApplication.is_draft) {
 							</button>
 							<a href="/dashboard" style="color: #6b7280; text-decoration: underline;">← Back to Dashboard</a>
 						</div>
-						<button type="submit" class="btn btn-primary" style="padding: 1rem 2rem;">
-							Submit Application
+						<button 
+							type="submit" 
+							class="btn btn-primary" 
+							style={`padding: 1rem 2rem; ${!applicationsOpen ? 'opacity: 0.6; cursor: not-allowed;' : ''}`}
+							disabled={!applicationsOpen}
+							title={!applicationsOpen ? 'Applications are currently closed' : ''}
+						>
+							{applicationsOpen ? 'Submit Application' : 'Applications Closed'}
 						</button>
 					</div>
 					<div id="save-status" style="margin-top: 1rem; text-align: center; display: none;"></div>

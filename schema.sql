@@ -11,13 +11,27 @@ CREATE TABLE IF NOT EXISTS applications (
   essay_one TEXT,
   essay_two TEXT,
   experience_data TEXT, -- JSON string for form responses
+  needs_financial_aid BOOLEAN DEFAULT 0,
+  student_location TEXT, -- massachusetts, out_of_state, international
   is_draft BOOLEAN DEFAULT 1,
   submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+  assigned_to TEXT, -- Email of admin/reviewer assigned to review
+  review_status TEXT DEFAULT 'unassigned', -- unassigned, assigned, in_review, completed
+  assigned_at DATETIME,
+  reviewed_at DATETIME,
+  reviewer_grade INTEGER, -- 1-5 rating from reviewer
+  reviewer_notes TEXT,
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS admins (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT UNIQUE NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS reviewers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP

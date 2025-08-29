@@ -1,5 +1,6 @@
 ---
-import { getSession, isAdmin } from '../lib/auth';
+import { getSession, getUserRole } from '../lib/auth';
+import { getApplicationStatus } from '../lib/application-status';
 
 const session = await getSession(Astro);
 
@@ -12,11 +13,17 @@ if (!db) {
   return new Response('Database not available', { status: 500 });
 }
 
-// Check if user is admin
-const userIsAdmin = await isAdmin(session.user.email, db);
-if (!userIsAdmin) {
+// Check user role - redirect reviewers to their review queue
+const userRole = await getUserRole(session.user.email, db);
+if (userRole === 'reviewer') {
+  return Astro.redirect('/review');
+}
+if (userRole !== 'admin') {
   return new Response('Unauthorized', { status: 403 });
 }
+
+// Get application status
+const applicationsOpen = await getApplicationStatus(db);
 
 // Get submitted applications with user data (ONLY submitted, no drafts)
 const applications = await db.prepare(`
@@ -25,24 +32,89 @@ const applications = await db.prepare(`
     a.essay_one,
     a.essay_two,
     a.experience_data,
+    a.needs_financial_aid,
     a.submitted_at,
     a.is_draft,
+    a.assigned_to,
+    a.review_status,
+    a.assigned_at,
+    a.reviewed_at,
+    a.reviewer_grade,
     u.name,
-    u.email
+    u.email,
+    u.first_name,
+    u.last_name,
+    u.preferred_email
   FROM applications a
   JOIN users u ON a.user_id = u.id
   WHERE a.is_draft = 0
   ORDER BY a.submitted_at DESC
 `).all();
 
+// Get all admin and reviewer users for assignment dropdown
+const admins = await db.prepare('SELECT email FROM admins ORDER BY email').all();
+const reviewers = await db.prepare('SELECT email FROM reviewers ORDER BY email').all();
+const allAssignees = [...(admins.results || []), ...(reviewers.results || [])].sort((a, b) => a.email.localeCompare(b.email));
+
 import Layout from '../layouts/Layout.astro';
 ---
 
-<Layout title="Admin Dashboard - Application Portal" session={session}>
+<Layout title="Admin Dashboard - Application Portal" session={session} userRole={userRole}>
 	<main class="main-content">
 		<div class="admin-section">
 			<div class="container">
-			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+			<!-- Application Status Control -->
+			<div style="background: white; border-radius: 5px; padding: 1rem; margin-bottom: 1.2rem; border: 1px solid #e5e7eb;">
+				<div style="display: flex; justify-content: space-between; align-items: center;">
+					<div>
+						<h3 style="margin: 0; font-size: 1.125rem; font-weight: 600; color: #111827;">Application Status</h3>
+						<p style="margin: 0.5rem 0 0 0; color: #6b7280; font-size: 0.875rem;">
+							Control whether new applications can be submitted
+						</p>
+					</div>
+					<div style="display: flex; align-items: center; gap: 1rem;">
+						<span style={`font-weight: 600; ${applicationsOpen ? 'color: #059669;' : 'color: #dc2626;'}`}>
+							{applicationsOpen ? '🟢 Open' : '🔴 Closed'}
+						</span>
+						<button 
+							id="toggle-applications-btn" 
+							class="btn"
+							style={`${applicationsOpen 
+								? 'background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);' 
+								: 'background: linear-gradient(135deg, #059669 0%, #047857 100%);'
+							} color: white;`}
+						>
+							{applicationsOpen ? '🔴 Close Applications' : '🟢 Open Applications'}
+						</button>
+					</div>
+				</div>
+			</div>
+
+
+			<!-- Reviewer Management Section -->
+			<div style="background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);">
+				<h3 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: #374151;">Reviewer Management</h3>
+				
+				<div style="display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center;">
+					<div style="display: flex; align-items: center; gap: 0.75rem;">
+						<input 
+							id="newReviewerEmail" 
+							type="email" 
+							placeholder="Enter reviewer email..." 
+							style="height: 40px; padding: 0 0.75rem; border: 2px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; min-width: 250px; background: white;"
+						>
+						<button id="addReviewerBtn" style="height: 40px; padding: 0 1rem; background: #6b7280; color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: not-allowed; white-space: nowrap;" disabled>
+							➕ Add Reviewer
+						</button>
+					</div>
+					
+					<div style="font-size: 0.75rem; color: #6b7280; text-align: right;">
+						Total Reviewers: {(reviewers.results?.length || 0) + (admins.results?.length || 0)}
+					</div>
+				</div>
+			</div>
+
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
 				<h2>Applications ({applications.results?.length || 0})</h2>
 				<div style="display: flex; gap: 1rem;">
 					<a href="/api/export-csv" class="btn btn-secondary">
@@ -54,88 +126,127 @@ import Layout from '../layouts/Layout.astro';
 				</div>
 			</div>
 
+			<!-- Assignment Controls -->
+			{applications.results && applications.results.length > 0 && (
+				<div style="background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);">
+					<h3 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: #374151;">Assignment Controls</h3>
+					
+					<div style="display: grid; grid-template-columns: auto 1fr auto auto; gap: 1.5rem; align-items: center;">
+						<!-- Select All -->
+						<div style="display: flex; align-items: center; gap: 0.5rem;">
+							<input type="checkbox" id="selectAll" style="width: 18px; height: 18px; border-radius: 4px; border: 2px solid #d1d5db; margin: 0; flex-shrink: 0; vertical-align: middle;">
+							<label for="selectAll" style="font-size: 0.875rem; font-weight: 500; color: #374151; white-space: nowrap; line-height: 18px; vertical-align: middle; margin: 0; padding: 0;">Select All</label>
+						</div>
+						
+						<!-- Assignment Section -->
+						<div style="display: flex; align-items: center; gap: 0.75rem;">
+							<select id="assignToSelect" style="height: 40px; padding: 0 0.75rem; border: 2px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; min-width: 180px; background: white;">
+								<option value="">Choose reviewer to assign...</option>
+								{allAssignees.map((assignee: any) => (
+									<option value={assignee.email}>{assignee.email}</option>
+								))}
+							</select>
+							<button id="assignSelectedBtn" style="height: 40px; padding: 0 1rem; background: #6b7280; color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: not-allowed; white-space: nowrap;" disabled>
+								Assign Selected
+							</button>
+						</div>
+
+						<!-- Bulk Actions -->
+						<div style="display: flex; gap: 0.75rem;">
+							<button id="autoAssignBtn" style="height: 40px; padding: 0 1rem; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;">
+								🎯 Auto-Assign
+							</button>
+							<button id="unassignAllBtn" style="height: 40px; padding: 0 1rem; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;">
+								🔄 Unassign All
+							</button>
+						</div>
+
+						<!-- Selected Count -->
+						<div style="font-size: 0.875rem; color: #6b7280; white-space: nowrap;">
+							<span id="selectedCount">0</span> selected
+						</div>
+					</div>
+				</div>
+			)}
+
 			{applications.results && applications.results.length > 0 ? (
-				<div class="space-y-6">
+				<div class="space-y-1">
 					{applications.results.map((app: any) => {
-						const experienceData = JSON.parse(app.experience_data);
+						const statusColors = {
+							'unassigned': 'border-gray-400',
+							'assigned': 'border-orange-500',
+							'in_review': 'border-blue-500', 
+							'completed': 'border-green-500'
+						} as const;
+						const statusTexts = {
+							'unassigned': '⚪ Unassigned',
+							'assigned': '🟡 Assigned',
+							'in_review': '🔵 In Review',
+							'completed': '🟢 Completed'
+						} as const;
+						
 						return (
-							<div class="card">
-								<div class="border-b border-gray-200 pb-4 mb-4">
-									<div class="flex justify-between items-start">
-										<div>
-											<h3 class="text-lg font-semibold text-gray-900">{app.name}</h3>
-											<p class="text-gray-600">{app.email}</p>
-										</div>
-										<div class="text-right">
-											<p class="text-sm text-gray-500">Application #{app.id}</p>
-											<p class="text-sm text-gray-500">
-												Submitted: {new Date(app.submitted_at).toLocaleDateString()}
-											</p>
-										</div>
-									</div>
-								</div>
-
-								<div class="grid md:grid-cols-2 gap-6">
-									<div>
-										<h4 class="font-medium text-gray-900 mb-2">Essay 1: Background</h4>
-										<div class="bg-gray-50 p-3 rounded text-sm text-gray-700 max-h-32 overflow-y-auto">
-											{app.essay_one.substring(0, 300)}{app.essay_one.length > 300 ? '...' : ''}
-										</div>
-									</div>
-
-									<div>
-										<h4 class="font-medium text-gray-900 mb-2">Essay 2: Interest</h4>
-										<div class="bg-gray-50 p-3 rounded text-sm text-gray-700 max-h-32 overflow-y-auto">
-											{app.essay_two.substring(0, 300)}{app.essay_two.length > 300 ? '...' : ''}
-										</div>
-									</div>
-								</div>
-
-								<div class="mt-4 grid md:grid-cols-3 gap-4 text-sm">
-									<div>
-										<span class="font-medium">Programming:</span> {experienceData.programming_experience}
-									</div>
-									<div>
-										<span class="font-medium">Languages:</span> {experienceData.languages.join(', ') || 'None'}
-									</div>
-									<div>
-										<span class="font-medium">Research:</span> {experienceData.research_experience}
-									</div>
-								</div>
-
-								<div class="mt-2 grid md:grid-cols-2 gap-4 text-sm">
-									<div>
-										<span class="font-medium">Grade Level:</span> {experienceData.grade_level}
-									</div>
-								</div>
-
-								<div class="mt-4">
-									<h4 class="font-medium text-gray-900 mb-2">Clubs & Activities:</h4>
-									<p class="text-sm text-gray-700 bg-gray-50 p-3 rounded">
-										{experienceData.clubs_activities}
-									</p>
-								</div>
-
-								<div class="mt-4">
-									<h4 class="font-medium text-gray-900 mb-2">Final Thoughts:</h4>
-									<p class="text-sm text-gray-700 bg-gray-50 p-3 rounded">
-										{experienceData.final_thoughts}
-									</p>
-								</div>
-
-
-								<div id={`full-view-${app.id}`} class="hidden mt-4 space-y-4">
-									<div>
-										<h4 class="font-medium text-gray-900 mb-2">Complete Essay 1:</h4>
-										<div class="bg-gray-50 p-4 rounded text-sm text-gray-700 whitespace-pre-wrap">
-											{app.essay_one}
+							<div 
+								class={`card hover:shadow-lg transition-shadow border-l-4 ${statusColors[app.review_status as keyof typeof statusColors] || 'border-gray-400'}`}
+								style="padding: 1rem; margin-bottom: 0.5rem;"
+							>
+								<div style="display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center;">
+									<!-- Checkbox -->
+									<input 
+										type="checkbox" 
+										class="app-checkbox" 
+										data-app-id={app.id}
+										style="width: 18px; height: 18px; margin: 0; border-radius: 4px; border: 2px solid #d1d5db;"
+									>
+									
+									<!-- Main Content -->
+									<div 
+										style="cursor: pointer; min-width: 0;"
+										onclick={`window.location.href='/admin/application/${app.id}'`}
+									>
+										<h3 style="font-size: 1.125rem; font-weight: 600; color: #111827; margin: 0 0 0.25rem 0;">
+											{app.first_name} {app.last_name}
+										</h3>
+										<p style="color: #6b7280; font-size: 0.875rem; margin: 0 0 0.5rem 0;">
+											{app.preferred_email || app.email}
+										</p>
+										<div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+											<span style="font-size: 0.875rem; font-weight: 500;">
+												{statusTexts[app.review_status as keyof typeof statusTexts] || '⚪ Unknown'}
+											</span>
+											{app.review_status === 'completed' && app.reviewer_grade && (
+												<span style={`display: inline-block; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 600; ${
+													app.reviewer_grade >= 4 ? 'background: #dcfce7; color: #166534;' :
+													app.reviewer_grade === 3 ? 'background: #fef3c7; color: #92400e;' :
+													'background: #fee2e2; color: #991b1b;'
+												}`}>
+													Grade: {app.reviewer_grade}/5
+												</span>
+											)}
+											{app.assigned_to && (
+												<span style="font-size: 0.75rem; color: #6b7280;">
+													Assigned to: {app.assigned_to}
+												</span>
+											)}
+											{app.needs_financial_aid && (
+												<span style="display: inline-block; background: #fed7aa; color: #ea580c; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 500;">
+													Financial Aid Requested
+												</span>
+											)}
 										</div>
 									</div>
-									<div>
-										<h4 class="font-medium text-gray-900 mb-2">Complete Essay 2:</h4>
-										<div class="bg-gray-50 p-4 rounded text-sm text-gray-700 whitespace-pre-wrap">
-											{app.essay_two}
-										</div>
+
+									<!-- Right Info -->
+									<div style="text-align: right; white-space: nowrap;">
+										<p style="font-size: 0.875rem; font-weight: 600; color: #111827; margin: 0 0 0.25rem 0;">
+											App #{app.id}
+										</p>
+										<p style="font-size: 0.75rem; color: #6b7280; margin: 0 0 0.25rem 0;">
+											{new Date(app.submitted_at).toLocaleDateString()}
+										</p>
+										<p style="font-size: 0.75rem; color: #2563eb; margin: 0; cursor: pointer;">
+											View Details →
+										</p>
 									</div>
 								</div>
 							</div>
@@ -152,15 +263,58 @@ import Layout from '../layouts/Layout.astro';
 		</div>
 
 		<script>
-			function toggleFullView(id: string) {
-				const element = document.getElementById(`full-view-${id}`);
-				if (element) {
-					element.classList.toggle('hidden');
-				}
-			}
-
 			document.addEventListener('DOMContentLoaded', function() {
-				const wipeBtn = document.getElementById('wipe-database-btn');
+				// Handle application toggle
+				const toggleBtn = document.getElementById('toggle-applications-btn') as HTMLButtonElement;
+				if (toggleBtn) {
+					toggleBtn.addEventListener('click', async function() {
+						const isCurrentlyOpen = this.textContent.includes('Close');
+						const newState = !isCurrentlyOpen;
+						
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Updating...';
+
+						try {
+							const formData = new FormData();
+							formData.append('isOpen', newState.toString());
+
+							const response = await fetch('/api/admin/toggle-applications', {
+								method: 'POST',
+								body: formData
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								// Update button text and style
+								this.textContent = newState ? '🔴 Close Applications' : '🟢 Open Applications';
+								this.style.background = newState 
+									? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' 
+									: 'linear-gradient(135deg, #059669 0%, #047857 100%)';
+								
+								// Update status indicator
+								const statusIndicator = this.parentElement?.previousElementSibling?.querySelector('span');
+								if (statusIndicator) {
+									statusIndicator.textContent = newState ? '🟢 Open' : '🔴 Closed';
+									statusIndicator.style.color = newState ? '#059669' : '#dc2626';
+								}
+								
+								alert(`✅ ${result.message}`);
+							} else {
+								alert(`❌ Error: ${result.error}`);
+								this.textContent = originalText;
+							}
+						} catch (error) {
+							alert('❌ Error updating application status. Please try again.');
+							this.textContent = originalText;
+						} finally {
+							this.disabled = false;
+						}
+					});
+				}
+
+				const wipeBtn = document.getElementById('wipe-database-btn') as HTMLButtonElement;
 				if (wipeBtn) {
 					wipeBtn.addEventListener('click', async function() {
 						// First confirmation
@@ -181,7 +335,7 @@ import Layout from '../layouts/Layout.astro';
 						}
 
 						const originalText = this.textContent;
-						(this as HTMLButtonElement).disabled = true;
+						this.disabled = true;
 						this.textContent = '🔄 Wiping...';
 
 						try {
@@ -204,11 +358,293 @@ import Layout from '../layouts/Layout.astro';
 						} catch (error) {
 							alert('❌ Error wiping database. Please try again.');
 						} finally {
-							(this as HTMLButtonElement).disabled = false;
+							this.disabled = false;
 							this.textContent = originalText;
 						}
 					});
 				}
+
+				// Assignment controls functionality
+				const selectAllCheckbox = document.getElementById('selectAll') as HTMLInputElement;
+				const appCheckboxes = document.querySelectorAll('.app-checkbox') as NodeListOf<HTMLInputElement>;
+				const assignSelectedBtn = document.getElementById('assignSelectedBtn') as HTMLButtonElement;
+				const assignToSelect = document.getElementById('assignToSelect') as HTMLSelectElement;
+				const autoAssignBtn = document.getElementById('autoAssignBtn') as HTMLButtonElement;
+				const unassignAllBtn = document.getElementById('unassignAllBtn') as HTMLButtonElement;
+				const selectedCountSpan = document.getElementById('selectedCount') as HTMLSpanElement;
+
+				// Reviewer management elements
+				const newReviewerEmail = document.getElementById('newReviewerEmail') as HTMLInputElement;
+				const addReviewerBtn = document.getElementById('addReviewerBtn') as HTMLButtonElement;
+
+
+				// Update selected count and button state
+				function updateAssignmentControls() {
+					const selectedCount = document.querySelectorAll('.app-checkbox:checked').length;
+					selectedCountSpan.textContent = selectedCount.toString();
+					
+					const hasSelection = selectedCount > 0;
+					const hasAdminSelected = assignToSelect.value !== '';
+					
+					// Update assign button
+					assignSelectedBtn.disabled = !hasSelection || !hasAdminSelected;
+					if (assignSelectedBtn.disabled) {
+						assignSelectedBtn.style.background = '#6b7280';
+						assignSelectedBtn.style.cursor = 'not-allowed';
+					} else {
+						assignSelectedBtn.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
+						assignSelectedBtn.style.cursor = 'pointer';
+					}
+				}
+
+				// Select all functionality
+				if (selectAllCheckbox) {
+					selectAllCheckbox.addEventListener('change', function() {
+						appCheckboxes.forEach(checkbox => {
+							checkbox.checked = this.checked;
+						});
+						updateAssignmentControls();
+					});
+				}
+
+				// Individual checkbox functionality
+				appCheckboxes.forEach(checkbox => {
+					checkbox.addEventListener('change', function() {
+						// Update select all checkbox state
+						const allChecked = document.querySelectorAll('.app-checkbox:checked').length === appCheckboxes.length;
+						const someChecked = document.querySelectorAll('.app-checkbox:checked').length > 0;
+						
+						if (selectAllCheckbox) {
+							selectAllCheckbox.checked = allChecked;
+							selectAllCheckbox.indeterminate = someChecked && !allChecked;
+						}
+						
+						updateAssignmentControls();
+					});
+
+					// Stop propagation on checkbox clicks
+					checkbox.addEventListener('click', function(event) {
+						event.stopPropagation();
+					});
+				});
+
+				// Admin selection change
+				if (assignToSelect) {
+					assignToSelect.addEventListener('change', updateAssignmentControls);
+				}
+
+				// Assign selected applications
+				if (assignSelectedBtn) {
+					assignSelectedBtn.addEventListener('click', async function() {
+						const selectedApps = Array.from(document.querySelectorAll('.app-checkbox:checked'))
+							.map(checkbox => parseInt((checkbox as HTMLInputElement).dataset.appId || '0'))
+							.filter(id => id > 0);
+						
+						const assignToEmail = assignToSelect.value;
+
+						if (selectedApps.length === 0) {
+							alert('Please select applications to assign.');
+							return;
+						}
+
+						if (!assignToEmail) {
+							alert('Please select an admin to assign to.');
+							return;
+						}
+
+						if (!confirm(`Assign ${selectedApps.length} applications to ${assignToEmail}?`)) {
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Assigning...';
+
+						try {
+							const response = await fetch('/api/admin/assign-applications', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								},
+								body: JSON.stringify({
+									applicationIds: selectedApps,
+									assignToEmail: assignToEmail,
+									action: 'manual'
+								})
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error assigning applications. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+						}
+					});
+				}
+
+				// Auto-assign functionality
+				if (autoAssignBtn) {
+					autoAssignBtn.addEventListener('click', async function() {
+						if (!confirm('This will automatically assign all unassigned applications evenly among all admins. Continue?')) {
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Auto-assigning...';
+
+						try {
+							const response = await fetch('/api/admin/assign-applications', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								},
+								body: JSON.stringify({
+									action: 'auto_assign'
+								})
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error auto-assigning applications. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+						}
+					});
+				}
+
+				// Unassign all functionality
+				if (unassignAllBtn) {
+					unassignAllBtn.addEventListener('click', async function() {
+						if (!confirm('⚠️ This will unassign ALL applications and reset their review status to "unassigned". Continue?')) {
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Unassigning...';
+
+						try {
+							const response = await fetch('/api/admin/unassign-all', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								}
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error unassigning applications. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+						}
+					});
+				}
+
+				// Reviewer management functionality
+				function updateAddReviewerButton() {
+				    if (!newReviewerEmail) return;
+					
+					const hasEmail = newReviewerEmail.value.trim() !== '';
+					const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newReviewerEmail.value.trim());
+					
+					addReviewerBtn.disabled = !hasEmail || !isValidEmail;
+					
+					if (addReviewerBtn.disabled) {
+						addReviewerBtn.style.background = '#6b7280';
+						addReviewerBtn.style.cursor = 'not-allowed';
+					} else {
+						addReviewerBtn.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
+						addReviewerBtn.style.cursor = 'pointer';
+					}
+				}
+
+				// Email input change
+				if (newReviewerEmail) {
+					newReviewerEmail.addEventListener('input', updateAddReviewerButton);
+					newReviewerEmail.addEventListener('keypress', function(event) {
+						if (event.key === 'Enter' && !addReviewerBtn.disabled) {
+							addReviewerBtn.click();
+						}
+					});
+				}
+
+				// Add reviewer functionality
+				if (addReviewerBtn) {
+					addReviewerBtn.addEventListener('click', async function() {
+						const email = newReviewerEmail.value.trim();
+						
+						if (!email) {
+							alert('Please enter an email address.');
+							return;
+						}
+
+						if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+							alert('Please enter a valid email address.');
+							return;
+						}
+
+						const originalText = this.textContent;
+						this.disabled = true;
+						this.textContent = '🔄 Adding...';
+
+						try {
+							const response = await fetch('/api/admin/add-reviewer', {
+								method: 'POST',
+								headers: {
+									'Content-Type': 'application/json',
+								},
+								body: JSON.stringify({
+									email: email
+								})
+							});
+
+							const result = await response.json();
+
+							if (response.ok) {
+								alert(`✅ ${result.message}`);
+								newReviewerEmail.value = '';
+								location.reload();
+							} else {
+								alert(`❌ Error: ${result.error}`);
+							}
+						} catch (error) {
+							alert('❌ Error adding reviewer. Please try again.');
+						} finally {
+							this.disabled = false;
+							this.textContent = originalText;
+							updateAddReviewerButton();
+						}
+					});
+				}
+
+				// Initial state
+				updateAssignmentControls();
+				updateAddReviewerButton();
 			});
 		</script>
 	</main>

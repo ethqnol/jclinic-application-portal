@@ -1,0 +1,735 @@
+---
+import { getSession, getUserRole } from '../../../lib/auth';
+
+const session = await getSession(Astro);
+
+if (!session) {
+  return Astro.redirect('/');
+}
+
+const db = Astro.locals.runtime?.env.DB;
+if (!db) {
+  return new Response('Database not available', { status: 500 });
+}
+
+// Check if user is admin or reviewer
+const userRole = await getUserRole(session.user.email, db);
+if (userRole !== 'admin' && userRole !== 'reviewer') {
+  return new Response('Unauthorized', { status: 403 });
+}
+
+// Get application ID from URL
+const { id } = Astro.params;
+
+// Get specific application with user data
+const applicationResult = await db.prepare(`
+  SELECT 
+    a.id,
+    a.essay_one,
+    a.essay_two,
+    a.experience_data,
+    a.needs_financial_aid,
+    a.student_location,
+    a.submitted_at,
+    a.is_draft,
+    a.assigned_to,
+    a.review_status,
+    a.assigned_at,
+    a.reviewed_at,
+    a.reviewer_grade,
+    a.reviewer_notes,
+    u.name,
+    u.email,
+    u.first_name,
+    u.last_name,
+    u.preferred_email
+  FROM applications a
+  JOIN users u ON a.user_id = u.id
+  WHERE a.id = ? AND a.is_draft = 0
+`).bind(id).first();
+
+const application = applicationResult;
+
+if (!application) {
+  return new Response('Application not found', { status: 404 });
+}
+
+const experienceData = JSON.parse(application.experience_data);
+
+import Layout from '../../../layouts/Layout.astro';
+---
+
+<Layout title={`Application #${application.id} - Admin Portal`} session={session} userRole={userRole}>
+	<style>
+		.sidebar {
+			position: sticky;
+			top: 120px;
+			height: fit-content;
+		}
+		
+		.content-area {
+			min-height: 100vh;
+		}
+		
+		@media print {
+			@page {
+				margin: 0.5in;
+				size: letter;
+			}
+			
+			* {
+				background: white !important;
+				color: black !important;
+				box-shadow: none !important;
+				text-shadow: none !important;
+				border: none !important;
+			}
+			
+			body { 
+				font-family: 'Arial', sans-serif !important;
+				font-size: 10pt !important;
+				line-height: 1.4 !important;
+				color: black !important;
+				background: white !important;
+			}
+			
+			.main-content, .admin-section, .container {
+				max-width: none !important;
+				margin: 0 !important;
+				padding: 0 !important;
+				background: white !important;
+			}
+			
+			.no-print { 
+				display: none !important; 
+			}
+			
+			.content-grid {
+				display: block !important;
+			}
+			
+			.card {
+				border: none !important;
+				box-shadow: none !important;
+				margin-bottom: 12pt !important;
+				padding: 0 !important;
+				background: white !important;
+			}
+			
+			/* Contact Section - Clean and Simple */
+			h2 {
+				font-size: 14pt !important;
+				font-weight: bold !important;
+				margin-bottom: 6pt !important;
+				color: black !important;
+			}
+			
+			/* Sidebar - Clean List Format */
+			.sidebar {
+				background: white !important;
+				border: none !important;
+				padding: 0 !important;
+				margin-bottom: 16pt !important;
+				position: static !important;
+				width: 100% !important;
+			}
+			
+			.sidebar h3 {
+				font-size: 12pt !important;
+				font-weight: bold !important;
+				margin-bottom: 8pt !important;
+				color: black !important;
+				text-align: left !important;
+				border-bottom: 1pt solid black !important;
+				padding-bottom: 2pt !important;
+			}
+			
+			.sidebar span {
+				font-weight: bold !important;
+				font-size: 9pt !important;
+				color: black !important;
+			}
+			
+			.sidebar p {
+				font-size: 10pt !important;
+				margin: 1pt 0 4pt 0 !important;
+				color: black !important;
+			}
+			
+			/* Essay Sections - Clean and Minimal */
+			h3 {
+				font-size: 12pt !important;
+				font-weight: bold !important;
+				margin: 12pt 0 6pt 0 !important;
+				color: black !important;
+				border-bottom: 1pt solid black !important;
+				padding-bottom: 2pt !important;
+				page-break-after: avoid;
+			}
+			
+			/* Essay content styling */
+			.bg-gray-50 {
+				background: white !important;
+				border: none !important;
+				padding: 0 !important;
+				margin: 6pt 0 !important;
+				font-family: 'Arial', sans-serif !important;
+				font-size: 10pt !important;
+				line-height: 1.4 !important;
+				color: black !important;
+				white-space: pre-wrap !important;
+				page-break-after: always !important;
+			}
+			
+			/* Keep sidebar and contact info together */
+			.sidebar, .card:first-of-type {
+				page-break-after: avoid !important;
+			}
+			
+			/* Remove all decorative elements */
+			.bg-gray-100 {
+				background: white !important;
+			}
+			
+			/* Ensure all content is visible in print */
+			[style*="display: none"] {
+				display: block !important;
+			}
+		}
+	</style>
+
+	<script is:inline define:vars={{ applicationId: application.id }}>
+		// Initialize all sections as collapsed
+		document.addEventListener('DOMContentLoaded', function() {
+			const sections = ['essay1', 'essay2', 'clubs', 'final'];
+			sections.forEach(sectionId => {
+				const content = document.getElementById(`${sectionId}-content`);
+				const toggle = document.getElementById(`${sectionId}-toggle`);
+				if (content && toggle) {
+					content.style.display = 'none';
+					toggle.textContent = '▶ Expand';
+				}
+			});
+		});
+
+		window.toggleEssay = function(sectionId) {
+			const content = document.getElementById(`${sectionId}-content`);
+			const toggle = document.getElementById(`${sectionId}-toggle`);
+			
+			if (content && toggle) {
+				const isHidden = content.style.display === 'none';
+				content.style.display = isHidden ? 'block' : 'none';
+				toggle.textContent = isHidden ? '▼ Collapse' : '▶ Expand';
+			}
+		};
+
+		window.expandOnClick = function(sectionId) {
+			const content = document.getElementById(`${sectionId}-content`);
+			const toggle = document.getElementById(`${sectionId}-toggle`);
+			
+			// Only expand if currently collapsed
+			if (content && toggle && content.style.display === 'none') {
+				content.style.display = 'block';
+				toggle.textContent = '▼ Collapse';
+			}
+		};
+
+		// Reviewer grading functionality
+		document.addEventListener('DOMContentLoaded', function() {
+			const saveReviewBtn = document.getElementById('save-review-btn');
+			const startReviewBtn = document.getElementById('start-review-btn');
+			const completeReviewBtn = document.getElementById('complete-review-btn');
+			const uncompleteReviewBtn = document.getElementById('uncomplete-review-btn');
+			const gradeSelect = document.getElementById('reviewer_grade');
+			const notesTextarea = document.getElementById('reviewer_notes');
+
+			// Save review data
+			if (saveReviewBtn) {
+				saveReviewBtn.addEventListener('click', async function() {
+					const grade = gradeSelect?.value ? parseInt(gradeSelect.value) : null;
+					const notes = notesTextarea?.value || '';
+
+					const originalText = this.textContent;
+					this.disabled = true;
+					this.textContent = '💾 Saving...';
+
+					try {
+						const response = await fetch('/api/admin/save-review', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								applicationId: applicationId,
+								grade: grade,
+								notes: notes
+							})
+						});
+
+						const result = await response.json();
+
+						if (response.ok) {
+							alert('✅ Review saved successfully!');
+						} else {
+							alert('❌ Error: ' + result.error);
+						}
+					} catch (error) {
+						alert('❌ Error saving review. Please try again.');
+					} finally {
+						this.disabled = false;
+						this.textContent = originalText;
+					}
+				});
+			}
+
+			// Start review
+			if (startReviewBtn) {
+				startReviewBtn.addEventListener('click', async function() {
+					const originalText = this.textContent;
+					this.disabled = true;
+					this.textContent = '▶️ Starting...';
+
+					try {
+						const response = await fetch('/api/admin/update-review-status', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								applicationId: applicationId,
+								status: 'in_review'
+							})
+						});
+
+						const result = await response.json();
+
+						if (response.ok) {
+							location.reload();
+						} else {
+							alert('❌ Error: ' + result.error);
+						}
+					} catch (error) {
+						alert('❌ Error starting review. Please try again.');
+					} finally {
+						this.disabled = false;
+						this.textContent = originalText;
+					}
+				});
+			}
+
+			// Complete review
+			if (completeReviewBtn) {
+				completeReviewBtn.addEventListener('click', async function() {
+					// Validate grade and comments are provided
+					const grade = gradeSelect?.value ? parseInt(gradeSelect.value) : null;
+					const notes = notesTextarea?.value?.trim() || '';
+
+					if (!grade || grade < 1 || grade > 5) {
+						alert('❌ Please select a grade (1-5) before marking this review as complete.');
+						return;
+					}
+
+					if (!notes) {
+						alert('❌ Please add reviewer notes/comments before marking this review as complete.');
+						return;
+					}
+
+					if (!confirm('Are you sure you want to mark this review as completed? This will save your grade and comments.')) {
+						return;
+					}
+
+					const originalText = this.textContent;
+					this.disabled = true;
+					this.textContent = '✅ Completing...';
+
+					try {
+						// First save the review data
+						const saveResponse = await fetch('/api/admin/save-review', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								applicationId: applicationId,
+								grade: grade,
+								notes: notes
+							})
+						});
+
+						if (!saveResponse.ok) {
+							const saveResult = await saveResponse.json();
+							alert('❌ Error saving review data: ' + saveResult.error);
+							return;
+						}
+
+						// Then mark as completed
+						const response = await fetch('/api/admin/update-review-status', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								applicationId: applicationId,
+								status: 'completed'
+							})
+						});
+
+						const result = await response.json();
+
+						if (response.ok) {
+							location.reload();
+						} else {
+							alert('❌ Error: ' + result.error);
+						}
+					} catch (error) {
+						alert('❌ Error completing review. Please try again.');
+					} finally {
+						this.disabled = false;
+						this.textContent = originalText;
+					}
+				});
+			}
+
+			// Uncomplete review
+			if (uncompleteReviewBtn) {
+				uncompleteReviewBtn.addEventListener('click', async function() {
+					if (!confirm('Are you sure you want to reopen this application for review?')) {
+						return;
+					}
+
+					const originalText = this.textContent;
+					this.disabled = true;
+					this.textContent = '🔄 Reopening...';
+
+					try {
+						const response = await fetch('/api/admin/update-review-status', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								applicationId: applicationId,
+								status: 'in_review'
+							})
+						});
+
+						const result = await response.json();
+
+						if (response.ok) {
+							location.reload();
+						} else {
+							alert('❌ Error: ' + result.error);
+						}
+					} catch (error) {
+						alert('❌ Error reopening review. Please try again.');
+					} finally {
+						this.disabled = false;
+						this.textContent = originalText;
+					}
+				});
+			}
+		});
+	</script>
+	<main class="main-content">
+		<div class="admin-section">
+			<div class="container max-w-7xl">
+				<!-- Header with navigation -->
+				<div class="flex items-center gap-4 mb-6 no-print">
+					<a href="/admin" class="text-blue-600 hover:text-blue-800 flex items-center gap-2">
+						← Back to Applications
+					</a>
+					<div class="h-6 border-l border-gray-300"></div>
+					<h1 class="text-2xl font-bold text-gray-900">Application #{application.id}</h1>
+				</div>
+
+				<!-- Contact Info Card (Top of page) -->
+				<div class="card mb-6">
+					<div class="flex justify-between items-start">
+						<div>
+							<h2 class="text-xl font-semibold text-gray-900">{application.first_name} {application.last_name}</h2>
+							<p class="text-gray-600 mt-1">Google Account: {application.email}</p>
+							<p class="text-gray-600">Preferred Contact: {application.preferred_email}</p>
+						</div>
+						<div class="text-right">
+							<p class="text-sm text-gray-500">
+								Submitted: {new Date(application.submitted_at).toLocaleDateString()}
+							</p>
+							<p class="text-sm text-gray-500 no-print">
+								Time: {new Date(application.submitted_at).toLocaleTimeString()}
+							</p>
+						</div>
+					</div>
+				</div>
+
+				<!-- Main Content Grid -->
+				<div class="content-grid grid grid-cols-1 lg:grid-cols-4 gap-6">
+					<!-- Sidebar -->
+					<div class="lg:col-span-1">
+						<div class="sidebar">
+							<div class="card">
+								<h3 class="text-lg font-semibold text-gray-900 mb-4">General Information</h3>
+								<div class="space-y-4">
+									<div>
+										<span class="font-medium text-gray-900 block">Programming Experience</span>
+										<p class="text-gray-700">{experienceData.programming_experience}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Programming Languages</span>
+										<p class="text-gray-700">{experienceData.languages.join(', ') || 'None'}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Research Experience</span>
+										<p class="text-gray-700">{experienceData.research_experience}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Grade Level</span>
+										<p class="text-gray-700">{experienceData.grade_level}</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Student Location</span>
+										<p class="text-gray-700">
+											{application.student_location === 'massachusetts' ? 'Massachusetts' : 
+											 application.student_location === 'out_of_state' ? 'Out of State' : 
+											 application.student_location === 'international' ? 'International' : 
+											 'Not specified'}
+										</p>
+									</div>
+									<div>
+										<span class="font-medium text-gray-900 block">Financial Aid</span>
+										<span class={application.needs_financial_aid ? 'text-orange-600 font-medium' : 'text-gray-700'}>
+											{application.needs_financial_aid ? 'Yes - Requested' : 'No'}
+										</span>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Main Content Area -->
+					<div class="lg:col-span-3 content-area">
+
+						<!-- Essays Section -->
+						<div class="space-y-6">
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('essay1')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Essay 1: Background & Experience</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('essay1')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="essay1-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="essay1-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{application.essay_one}
+								</div>
+							</div>
+
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('essay2')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Essay 2: Interest & Goals</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('essay2')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="essay2-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="essay2-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{application.essay_two}
+								</div>
+							</div>
+						</div>
+
+						<!-- Additional Information -->
+						<div class="space-y-6 mt-6">
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('clubs')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Clubs & Activities</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('clubs')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="clubs-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="clubs-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{experienceData.clubs_activities}
+								</div>
+							</div>
+
+							<div class="card">
+								<div 
+									class="flex justify-between items-center mb-4 cursor-pointer" 
+									onclick="expandOnClick('final')"
+								>
+									<h3 class="text-lg font-semibold text-gray-900">Final Thoughts</h3>
+									<button 
+										onclick="event.stopPropagation(); toggleEssay('final')" 
+										class="no-print bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+										id="final-toggle"
+									>
+										▶ Expand
+									</button>
+								</div>
+								<div id="final-content" class="bg-gray-50 p-4 rounded text-gray-700 whitespace-pre-wrap leading-relaxed" style="display: none;">
+									{experienceData.final_thoughts}
+								</div>
+							</div>
+						</div>
+
+						<!-- Reviewer Grading Section -->
+						{userRole === 'reviewer' && application.assigned_to === session.user.email && (
+							<div class="card mt-6 no-print">
+								<h3 class="text-lg font-semibold text-gray-900 mb-4">Reviewer Assessment</h3>
+								
+								<div class="space-y-4">
+									<div>
+										<label for="reviewer_grade" class="block text-sm font-medium text-gray-700 mb-2">
+											Overall Grade (1-5 scale)
+										</label>
+										<select 
+											id="reviewer_grade" 
+											class="w-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+										>
+											<option value="">Select grade</option>
+											<option value="1" selected={application.reviewer_grade === 1}>1 - Poor</option>
+											<option value="2" selected={application.reviewer_grade === 2}>2 - Below Average</option>
+											<option value="3" selected={application.reviewer_grade === 3}>3 - Average</option>
+											<option value="4" selected={application.reviewer_grade === 4}>4 - Good</option>
+											<option value="5" selected={application.reviewer_grade === 5}>5 - Excellent</option>
+										</select>
+									</div>
+									
+									<div>
+										<label for="reviewer_notes" class="block text-sm font-medium text-gray-700 mb-2">
+											Reviewer Notes
+										</label>
+										<textarea 
+											id="reviewer_notes" 
+											rows="4"
+											class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+											placeholder="Add your notes about this application..."
+										>{application.reviewer_notes || ''}</textarea>
+									</div>
+									
+									<div class="flex gap-3">
+										<button 
+											id="save-review-btn" 
+											class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-medium transition-colors"
+										>
+											💾 Save Review
+										</button>
+										{application.review_status === 'assigned' && (
+											<button 
+												id="start-review-btn" 
+												class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium transition-colors"
+											>
+												▶️ Start Review
+											</button>
+										)}
+										{application.review_status === 'in_review' && (
+											<button 
+												id="complete-review-btn" 
+												class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded font-medium transition-colors"
+											>
+												✅ Mark Complete
+											</button>
+										)}
+										{application.review_status === 'completed' && (
+											<button 
+												id="uncomplete-review-btn" 
+												class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded font-medium transition-colors"
+											>
+												🔄 Reopen Review
+											</button>
+										)}
+									</div>
+								</div>
+							</div>
+						)}
+
+						<!-- Admin/Reviewer Status Display -->
+						{userRole === 'admin' && (
+							<div class="card mt-6 no-print bg-gray-50">
+								<h3 class="text-lg font-semibold text-gray-900 mb-4">Review Status</h3>
+								<div class="grid grid-cols-2 gap-4">
+									<div>
+										<span class="font-medium text-gray-700">Status:</span>
+										<span class={`ml-2 px-2 py-1 rounded-full text-xs font-medium ${
+											application.review_status === 'unassigned' ? 'bg-gray-100 text-gray-800' :
+											application.review_status === 'assigned' ? 'bg-orange-100 text-orange-800' :
+											application.review_status === 'in_review' ? 'bg-blue-100 text-blue-800' :
+											'bg-green-100 text-green-800'
+										}`}>
+											{application.review_status === 'unassigned' ? 'Unassigned' :
+											 application.review_status === 'assigned' ? 'Assigned' :
+											 application.review_status === 'in_review' ? 'In Review' :
+											 'Completed'}
+										</span>
+									</div>
+									<div>
+										<span class="font-medium text-gray-700">Assigned to:</span>
+										<span class="ml-2 text-gray-900">{application.assigned_to || 'None'}</span>
+									</div>
+									{application.reviewer_grade && (
+										<div>
+											<span class="font-medium text-gray-700">Grade:</span>
+											<span class={`ml-2 px-2 py-1 rounded text-sm font-medium ${
+												application.reviewer_grade >= 4 ? 'bg-green-100 text-green-800' :
+												application.reviewer_grade === 3 ? 'bg-yellow-100 text-yellow-800' :
+												'bg-red-100 text-red-800'
+											}`}>
+												{application.reviewer_grade}/5
+											</span>
+										</div>
+									)}
+									{application.reviewed_at && (
+										<div>
+											<span class="font-medium text-gray-700">Reviewed:</span>
+											<span class="ml-2 text-gray-900">{new Date(application.reviewed_at).toLocaleDateString()}</span>
+										</div>
+									)}
+								</div>
+								{application.reviewer_notes && (
+									<div class="mt-4">
+										<span class="font-medium text-gray-700">Reviewer Notes:</span>
+										<p class="mt-1 p-3 bg-white rounded border text-gray-900 whitespace-pre-wrap">{application.reviewer_notes}</p>
+									</div>
+								)}
+							</div>
+						)}
+
+						<!-- Action Buttons -->
+						<div class="flex gap-4 mt-8 pt-6 border-t no-print">
+							{userRole === 'admin' ? (
+								<a href="/admin" class="btn btn-secondary">
+									← Back to All Applications
+								</a>
+							) : (
+								<a href="/review" class="btn btn-secondary">
+									← Back to My Review Queue
+								</a>
+							)}
+							<button onclick="window.print()" class="btn btn-primary">
+								🖨️ Print Application
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</main>
+</Layout>
