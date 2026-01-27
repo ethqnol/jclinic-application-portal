@@ -36,7 +36,7 @@ export const GET: APIRoute = async ({ locals, cookies }) => {
         a.experience_data,
         a.needs_financial_aid,
         a.submitted_at,
-        a.student_location,
+        a.student_location
       FROM applications a
       JOIN users u ON a.user_id = u.id
       WHERE a.is_draft = 0
