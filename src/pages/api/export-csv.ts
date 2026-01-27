@@ -66,6 +66,7 @@ export const GET: APIRoute = async ({ locals, cookies }) => {
       "Final Thoughts",
       "Essay 1 (Interests & Background)",
       "Essay 2 (Future Goals)",
+      "Student Location",
     ];
 
     let csvContent = headers.join(",") + "\n";
@@ -88,6 +89,7 @@ export const GET: APIRoute = async ({ locals, cookies }) => {
         `"${experienceData.final_thoughts?.replace(/"/g, '""') || ""}"`,
         `"${app.essay_one?.replace(/"/g, '""') || ""}"`,
         `"${app.essay_two?.replace(/"/g, '""') || ""}"`,
+        app.student_location || "Unknown",
       ];
       csvContent += row.join(",") + "\n";
     });
