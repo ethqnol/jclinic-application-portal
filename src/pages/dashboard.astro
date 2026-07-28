@@ -149,42 +149,35 @@ if (recommendationRecord) {
 
 				{!recommendationRecord.is_submitted && (
 					<div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.25rem; margin-top: 1rem;">
-						<div class="notice-box notice-warning" style="margin-bottom: 1rem; background: #FFFBEB; border-color: #FDE68A;">
-							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+						<div class="notice-box notice-info" style="margin-bottom: 0.85rem; background: #EFF6FF; border-color: #BFDBFE;">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
 								<circle cx="12" cy="12" r="10"></circle>
-								<line x1="12" y1="8" x2="12" y2="12"></line>
-								<line x1="12" y1="16" x2="12.01" y2="16"></line>
+								<line x1="12" y1="16" x2="12" y2="12"></line>
+								<line x1="12" y1="8" x2="12.01" y2="8"></line>
 							</svg>
 							<div>
-								<div class="notice-title" style="color: #B45309;">Applicant Responsibility Notice</div>
-								<p class="notice-body" style="color: #92400E;">
-									<strong>You are personally responsible for sending the recommendation invitation link to your recommender.</strong> Use one of the options below to send the link & PIN to {recommendationRecord.recommender_name}.
+								<div class="notice-title" style="color: #1E40AF;">Automated Email Dispatch Notice</div>
+								<p class="notice-body" style="color: #1E3A8A; line-height: 1.5;">
+									<strong>Automated Recommendation Request Sent:</strong> An invitation email was automatically sent to {recommendationRecord.recommender_name} from <strong style="text-decoration: underline;">mitjclinic.camp.rec.letters@gmail.com</strong> (Automated No-Reply Email).
+									<br/>
+									<em>Please ask your recommender to check their <strong>Junk / Spam / Promotions</strong> folder if they do not see it in their main inbox.</em>
 								</p>
 							</div>
 						</div>
 
-						<div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
-							<!-- Option 1: Gmail Web -->
-							<a href={gmailWebUrl} target="_blank" rel="noopener" class="btn btn-primary btn-sm" style="display: inline-flex; align-items: center; gap: 0.4rem;">
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-									<polyline points="22,6 12,13 2,6"></polyline>
-								</svg>
-								Open in Gmail (Web)
-							</a>
-
-							<!-- Option 2: Default Mail App -->
-							<a href={mailtoUrl} class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 0.4rem;">
-								Open Default Mail App
-							</a>
-
-							<!-- Option 3: Copy to Clipboard -->
-							<button type="button" id="copy-email-template-btn" class="btn btn-secondary btn-sm" data-text={emailRawBody}>
-								Copy Email Text to Clipboard
-							</button>
-						</div>
-						<div id="copy-status-text" style="font-size: 0.75rem; color: var(--success-green); margin-top: 0.5rem; display: none;">
-							✓ Email text & link copied to clipboard!
+						<div class="notice-box notice-warning" style="margin: 0; background: #FFFBEB; border-color: #FCD34D;">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+								<polyline points="14 2 14 8 20 8"></polyline>
+								<line x1="12" y1="18" x2="12" y2="12"></line>
+								<line x1="12" y1="9" x2="12.01" y2="9"></line>
+							</svg>
+							<div>
+								<div class="notice-title" style="color: #92400E;">Alternative Submission via PDF Email</div>
+								<p class="notice-body" style="color: #78350F; line-height: 1.5;">
+									If no automated email is received by your recommender, they may email a <strong>PDF copy of their recommendation letter directly to <a href="mailto:jclinic-info@mit.edu" style="color: #92400E; font-weight: 700; text-decoration: underline;">jclinic-info@mit.edu</a></strong> with your full name (<strong>{currentUser.first_name} {currentUser.last_name}</strong>) in the email subject line.
+								</p>
+							</div>
 						</div>
 					</div>
 				)}
@@ -325,20 +318,6 @@ if (recommendationRecord) {
 							alert('Error deleting draft. Please try again.');
 						}
 					}
-				});
-			}
-
-			const copyBtn = document.getElementById('copy-email-template-btn');
-			const copyStatus = document.getElementById('copy-status-text');
-			if (copyBtn) {
-				copyBtn.addEventListener('click', function() {
-					const text = this.getAttribute('data-text');
-					navigator.clipboard.writeText(text).then(() => {
-						if (copyStatus) {
-							copyStatus.style.display = 'block';
-							setTimeout(() => { copyStatus.style.display = 'none'; }, 3500);
-						}
-					});
 				});
 			}
 		});

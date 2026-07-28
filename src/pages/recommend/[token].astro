@@ -13,7 +13,7 @@ const rec = await RecommendationService.getByToken(db, token);
 ---
 
 <Layout title="Submit Recommendation - MIT Jameel Clinic Bootcamp">
-  <div class="container" style="max-width: 760px; margin-top: 2rem;">
+  <div class="container" style="max-width: 760px; margin-top: 2rem; margin-bottom: 3rem;">
     
     {!rec ? (
       <div class="notice-box notice-warning">
@@ -56,7 +56,7 @@ const rec = await RecommendationService.getByToken(db, token);
             Submit Recommendation Letter
           </h2>
           <p style="color: var(--slate-600); font-size: 0.95rem; margin: 0;">
-            Recommending Student: <strong style="color: var(--brand-blue);">{rec.first_name} {rec.last_name}</strong> (MIT Jameel Clinic Summer Bootcamp 2027)
+            Recommending Student: <strong style="color: var(--brand-blue);">{rec.first_name} {rec.last_name}</strong> (MIT Jameel Clinic Summer Bootcamp)
           </p>
         </div>
 
@@ -75,7 +75,7 @@ const rec = await RecommendationService.getByToken(db, token);
             <label class="form-label" for="pin">
               6-Digit Access PIN *
               <span style="font-weight: 400; color: var(--slate-500); font-size: 0.825rem; display: block; margin-top: 0.2rem;">
-                Enter the 6-digit security PIN provided to you by {rec.first_name}.
+                Enter the 6-digit security PIN sent to your email ({rec.recommender_email}) or provided by {rec.first_name}.
               </span>
             </label>
             <input
@@ -110,6 +110,16 @@ const rec = await RecommendationService.getByToken(db, token);
             <div style="font-size: 0.75rem; color: var(--slate-500); text-align: right; margin-top: 0.4rem;">
               Characters: <span id="rec-char-count">0</span> / 5000
             </div>
+          </div>
+
+          <!-- Educator Honor Attestation Checkbox -->
+          <div style="background: #f8fafc; border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
+            <label style="display: flex; gap: 0.75rem; align-items: flex-start; cursor: pointer; font-size: 0.875rem; color: var(--slate-800); font-weight: 500;">
+              <input type="checkbox" id="educator_attestation" required style="margin-top: 0.2rem; width: 16px; height: 16px; accent-color: var(--brand-blue);" />
+              <span>
+                I certify that I am a high school teacher, counselor, or research supervisor, and <strong>NOT</strong> the applicant or related to the applicant. (Falsification results in immediate disqualification of the student's application).
+              </span>
+            </label>
           </div>
 
           <div class="notice-box notice-info" style="margin-bottom: 1.5rem;">

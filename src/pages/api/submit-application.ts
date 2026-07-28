@@ -3,6 +3,8 @@ import { requireAuth } from '../../lib/auth-guards';
 import { errorResponse } from '../../lib/api-response';
 import { getApplicationStatus } from '../../lib/application-status';
 import { ApplicationService } from '../../lib/services/applicationService';
+import { RecommendationService } from '../../lib/services/recommendationService';
+import { EmailService } from '../../lib/services/emailService';
 
 export const POST: APIRoute = async (context) => {
   const { session, db } = await requireAuth(context);
@@ -74,7 +76,51 @@ export const POST: APIRoute = async (context) => {
       return errorResponse('Please select your machine learning technologies or select "None"', 400);
     }
 
+    // 1. Submit Application to Database
     await ApplicationService.submitApplication(db, session.user.id, payload);
+
+    // 2. Non-blocking Automated Email Dispatch (Recommender Request + Student & Parent Confirmation)
+    const sendPromise = (async () => {
+      try {
+        const appRecord = await ApplicationService.getUserApplication(db, session.user.id);
+        const gmailPassword = context.locals.runtime?.env?.GMAIL_APP_PASSWORD || context.locals.runtime?.env?.SMTP_PASSWORD || import.meta.env.GMAIL_APP_PASSWORD || import.meta.env.SMTP_PASSWORD;
+
+        if (appRecord && gmailPassword) {
+          const recRecord = await RecommendationService.getForApplication(db, appRecord.id);
+
+          // Dispatch Recommender Request
+          if (recRecord) {
+            await EmailService.sendRecommendationRequest(gmailPassword, {
+              recommenderName: recRecord.recommender_name,
+              recommenderEmail: recRecord.recommender_email,
+              applicantName: session.user.name,
+              token: recRecord.token,
+              pin: recRecord.pin,
+              origin: context.url.origin,
+            });
+          }
+
+          // Dispatch Student & Parent Confirmation Email
+          await EmailService.sendApplicationConfirmation(gmailPassword, {
+            applicantName: `${payload.firstName} ${payload.lastName}`,
+            studentEmail: payload.preferredEmail || session.user.email,
+            parentEmail: payload.parentEmail,
+            parentName: payload.parentName,
+            recommenderName: payload.recommenderName,
+            recommenderEmail: payload.recommenderEmail,
+            origin: context.url.origin,
+          });
+        }
+      } catch (emailError) {
+        console.error('Non-blocking automated email dispatch error:', emailError);
+      }
+    })();
+
+    if (context.locals.runtime?.ctx?.waitUntil) {
+      context.locals.runtime.ctx.waitUntil(sendPromise);
+    } else {
+      await sendPromise;
+    }
 
     return context.redirect('/dashboard?success=submitted');
   } catch (error: any) {

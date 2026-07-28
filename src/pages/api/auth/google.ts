@@ -8,6 +8,17 @@ export const GET: APIRoute = async ({ redirect, url, locals, cookies }) => {
     return redirect('/?error=missing_client_id');
   }
   
+  const returnTo = url.searchParams.get('returnTo');
+  if (returnTo) {
+    cookies.set('oauth_return_to', returnTo, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      maxAge: 60 * 10, // 10 minutes
+      path: '/'
+    });
+  }
+  
   const redirectUri = new URL('/api/auth/callback', url.origin).toString();
   
   // Generate cryptographically secure random state parameter

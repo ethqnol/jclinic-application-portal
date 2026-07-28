@@ -1,37 +1,29 @@
 export class RecommendationService {
   private static async ensureTableExists(db: any) {
-    await db.prepare(`
-      CREATE TABLE IF NOT EXISTS recommendations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        application_id INTEGER NOT NULL,
-        recommender_name TEXT NOT NULL,
-        recommender_email TEXT NOT NULL,
-        recommender_title TEXT,
-        token TEXT UNIQUE NOT NULL,
-        pin TEXT NOT NULL,
-        letter_text TEXT,
-        is_submitted BOOLEAN DEFAULT 0,
-        submitted_at DATETIME,
-        submitter_ip TEXT,
-        is_personal_email BOOLEAN DEFAULT 0,
-        applicant_device_fp TEXT,
-        recommender_device_fp TEXT,
-        user_agent TEXT,
-        is_suspicious_submission BOOLEAN DEFAULT 0,
-        FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
-      );
-    `).run();
-
-    const columns = [
-      'ALTER TABLE recommendations ADD COLUMN is_personal_email BOOLEAN DEFAULT 0',
-      'ALTER TABLE recommendations ADD COLUMN applicant_device_fp TEXT',
-      'ALTER TABLE recommendations ADD COLUMN recommender_device_fp TEXT',
-      'ALTER TABLE recommendations ADD COLUMN user_agent TEXT',
-      'ALTER TABLE recommendations ADD COLUMN is_suspicious_submission BOOLEAN DEFAULT 0'
-    ];
-
-    for (const sql of columns) {
-      try { await db.prepare(sql).run(); } catch (e) {}
+    try {
+      await db.prepare(`
+        CREATE TABLE IF NOT EXISTS recommendations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          application_id INTEGER NOT NULL,
+          recommender_name TEXT NOT NULL,
+          recommender_email TEXT NOT NULL,
+          recommender_title TEXT,
+          token TEXT UNIQUE NOT NULL,
+          pin TEXT NOT NULL,
+          letter_text TEXT,
+          is_submitted BOOLEAN DEFAULT 0,
+          submitted_at DATETIME,
+          submitter_ip TEXT,
+          is_personal_email BOOLEAN DEFAULT 0,
+          applicant_device_fp TEXT,
+          recommender_device_fp TEXT,
+          user_agent TEXT,
+          is_suspicious_submission BOOLEAN DEFAULT 0,
+          FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
+        );
+      `).run();
+    } catch (e) {
+      console.error('ensureTableExists Error:', e);
     }
   }
 
@@ -102,7 +94,7 @@ export class RecommendationService {
     await this.ensureTableExists(db);
 
     const rec = await db.prepare(`
-      SELECT r.*, a.user_id, u.email as user_email, u.first_name, u.last_name, u.name as user_name
+      SELECT r.*, a.user_id, a.submitted_at as app_submitted_at, u.email as user_email, u.first_name, u.last_name, u.name as user_name
       FROM recommendations r
       JOIN applications a ON r.application_id = a.id
       JOIN users u ON a.user_id = u.id
@@ -141,11 +133,6 @@ export class RecommendationService {
       throw new Error('Please enter a valid recommendation letter.');
     }
 
-    // Silent Suspicion Check:
-    // Set is_suspicious_submission = 1 if:
-    // 1. Submitter is actively logged in to applicant session on same browser
-    // 2. Recommender email matches applicant's account email
-    // 3. Hardware device fingerprint match (applicant_device_fp === recommender_device_fp)
     let isSuspicious = 0;
     
     if (isSameSessionUser) {
@@ -154,6 +141,12 @@ export class RecommendationService {
       isSuspicious = 1;
     } else if (recommenderDeviceFp && rec.applicant_device_fp && recommenderDeviceFp === rec.applicant_device_fp) {
       isSuspicious = 1;
+    } else if (rec.app_submitted_at) {
+      const appTime = new Date(rec.app_submitted_at).getTime();
+      const nowTime = Date.now();
+      if (!isNaN(appTime) && (nowTime - appTime) < 3 * 60 * 1000) {
+        isSuspicious = 1;
+      }
     }
 
     await db.prepare(`

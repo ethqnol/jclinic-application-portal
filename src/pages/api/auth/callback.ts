@@ -96,6 +96,12 @@ export const GET: APIRoute = async ({ url, redirect, locals, cookies }) => {
       path: '/'
     });
 
+    const returnTo = cookies.get('oauth_return_to')?.value;
+    if (returnTo) {
+      cookies.delete('oauth_return_to', { path: '/' });
+      return redirect(returnTo);
+    }
+
     return redirect('/dashboard');
   } catch (error) {
     console.error('Auth error:', error);
