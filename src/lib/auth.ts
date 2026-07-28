@@ -51,21 +51,21 @@ export function clearSession(context: APIContext) {
 }
 
 export async function isAdmin(email: string, db: any): Promise<boolean> {
-  const admin = await db.prepare('SELECT id FROM admins WHERE email = ?').bind(email).first();
-  return !!admin;
+  if (!email || !db) return false;
+  try {
+    const admin = await db.prepare('SELECT id FROM admins WHERE email = ?').bind(email.toLowerCase().trim()).first();
+    return !!admin;
+  } catch (e) {
+    console.error('Error checking admin status:', e);
+    return false;
+  }
 }
 
 export async function isReviewer(email: string, db: any): Promise<boolean> {
-  const reviewer = await db.prepare('SELECT id FROM reviewers WHERE email = ?').bind(email).first();
-  return !!reviewer;
+  return await isAdmin(email, db);
 }
 
-export async function getUserRole(email: string, db: any): Promise<'admin' | 'reviewer' | 'user'> {
-  const admin = await db.prepare('SELECT id FROM admins WHERE email = ?').bind(email).first();
-  if (admin) return 'admin';
-  
-  const reviewer = await db.prepare('SELECT id FROM reviewers WHERE email = ?').bind(email).first();
-  if (reviewer) return 'reviewer';
-  
-  return 'user';
+export async function getUserRole(email: string, db: any): Promise<'admin' | 'user'> {
+  const adminRole = await isAdmin(email, db);
+  return adminRole ? 'admin' : 'user';
 }

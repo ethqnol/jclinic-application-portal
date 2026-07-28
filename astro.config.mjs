@@ -11,10 +11,5 @@ export default defineConfig({
       enabled: true
     }
   }),
-  integrations: [tailwind()],
-  vite: {
-    define: {
-      'process.env': process.env
-    }
-  }
+  integrations: [tailwind()]
 });

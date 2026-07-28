@@ -1,40 +1,24 @@
 import type { APIRoute } from 'astro';
-import { getSession } from '../../lib/auth';
+import { requireAuth } from '../../lib/auth-guards';
+import { jsonResponse, errorResponse } from '../../lib/api-response';
+import { ApplicationService } from '../../lib/services/applicationService';
 
-export const POST: APIRoute = async ({ cookies, locals }) => {
-  const session = await getSession({ cookies } as any);
+export const POST: APIRoute = async (context) => {
+  const { session, db } = await requireAuth(context);
   
   if (!session) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return errorResponse('Unauthorized', 401);
   }
 
-  const db = locals.runtime?.env.DB;
   if (!db) {
-    return new Response(JSON.stringify({ error: 'Database not available' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return errorResponse('Database not available', 500);
   }
 
   try {
-    // Delete the draft application
-    await db.prepare('DELETE FROM applications WHERE user_id = ? AND is_draft = 1')
-      .bind(session.user.id)
-      .run();
-
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-  } catch (error) {
+    await ApplicationService.deleteDraft(db, session.user.id);
+    return jsonResponse({ success: true, message: 'Draft deleted' });
+  } catch (error: any) {
     console.error('Delete draft error:', error);
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return errorResponse(error.message || 'Internal server error', 500);
   }
 };

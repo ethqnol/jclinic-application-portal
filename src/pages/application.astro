@@ -1,21 +1,19 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { getSession } from "../lib/auth";
-import { getApplicationStatus } from "../lib/application-status";
+import { getSession, getUserRole } from "../lib/auth";
+import { getApplicationStatus, calculateDraftSectionStatuses } from "../lib/application-status";
 
 const session = await getSession(Astro);
-
 if (!session) {
     return Astro.redirect("/");
 }
 
-// Check if user has already submitted an application or has a draft
-const db = Astro.locals.runtime?.env.DB;
-let existingApplication = null;
-let currentUser = session.user;
-
-// Check if applications are open
+const db = Astro.locals.runtime?.env?.DB;
+const userRole = db ? await getUserRole(session.user.email, db) : "user";
 const applicationsOpen = db ? await getApplicationStatus(db) : true;
+
+let existingApplication: any = null;
+let currentUser = session.user;
 
 if (db) {
     existingApplication = await db
@@ -23,20 +21,19 @@ if (db) {
         .bind(session.user.id)
         .first();
 
-    // Get the most up-to-date user information from the database
-    const dbUser = await db
+    const dbUser: any = await db
         .prepare("SELECT * FROM users WHERE id = ?")
         .bind(session.user.id)
         .first();
 
     if (dbUser) {
         currentUser = {
-            id: dbUser.id.toString(),
-            email: dbUser.email,
-            name: dbUser.name,
-            first_name: dbUser.first_name,
-            last_name: dbUser.last_name,
-            preferred_email: dbUser.preferred_email,
+            id: String(dbUser.id),
+            email: String(dbUser.email || ""),
+            name: String(dbUser.name || ""),
+            first_name: String(dbUser.first_name || ""),
+            last_name: String(dbUser.last_name || ""),
+            preferred_email: String(dbUser.preferred_email || dbUser.email || ""),
         };
     }
 }
@@ -45,13 +42,11 @@ if (existingApplication && !existingApplication.is_draft) {
     return Astro.redirect("/dashboard");
 }
 
-// If applications are closed and user doesn't have a draft, redirect to closed page
 if (!applicationsOpen && !existingApplication) {
     return Astro.redirect("/applications-closed");
 }
 
-// Parse existing draft data if available
-let draftData = null;
+let draftData: any = {};
 if (existingApplication && existingApplication.is_draft) {
     try {
         draftData = JSON.parse(existingApplication.experience_data || "{}");
@@ -59,676 +54,1018 @@ if (existingApplication && existingApplication.is_draft) {
         draftData = {};
     }
 }
+
+const currentLoc = existingApplication?.student_location || draftData?.student_location || "";
+const currentLocDetail = draftData?.location_detail || "";
+const initialStep = draftData?.current_step || 1;
+const initialSectionStatuses = calculateDraftSectionStatuses(currentUser, existingApplication);
+
+const usStates = [
+  "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", 
+  "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", 
+  "Louisiana", "Maine", "Maryland", "Michigan", "Minnesota", "Mississippi", "Missouri", 
+  "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", 
+  "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", 
+  "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", 
+  "Washington", "West Virginia", "Wisconsin", "Wyoming", "District of Columbia", "Puerto Rico", "Other"
+];
+
+const countries = [
+  "Canada", "United Kingdom", "China", "India", "Germany", "France", "Japan", "South Korea", 
+  "Australia", "Brazil", "Mexico", "Singapore", "Taiwan", "Vietnam", "Nigeria", "Egypt", 
+  "Turkey", "Spain", "Italy", "Switzerland", "Netherlands", "Sweden", "Other"
+];
+
+const mlFrameworks = [
+  "PyTorch", "TensorFlow/Keras", "Scikit-Learn", "Pandas/NumPy", 
+  "XGBoost / Trees / GBM", "OpenCV", "Hugging Face / LLMs", "Other", "None"
+];
 ---
 
-<Layout title="Application Form - Application Portal" session={session}>
-    <main class="main-content">
-        <div class="application-section">
-            <div class="container">
-                <div class="max-w-4xl mx-auto">
-                    <h2>Application Form</h2>
+<Layout title="Application Form - Application Portal" session={session} userRole={userRole}>
+    <div class="container" style="max-width: 1140px;">
+        
+        <div style="margin-bottom: 2rem;">
+            <h2 style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin-bottom: 0.25rem;">
+                Bootcamp Application Form
+            </h2>
+            <p style="color: var(--slate-600); font-size: 1rem;">
+                Complete all required sections below. You can save each section independently and return at any time.
+            </p>
+        </div>
 
-                    <!-- Program Information Notice -->
-                    <div
-                        class="card"
-                        style="background: #e0f2fe; border: 1px solid #0369a1; margin-bottom: 1.5rem;"
-                    >
-                        <div
-                            style="display: flex; align-items: center; gap: 0.75rem;"
+        <!-- Two Column Layout: Sticky Progress Sidebar + Wizard Forms -->
+        <div style="display: grid; grid-template-columns: 280px 1fr; gap: 2rem; align-items: start;">
+            
+            <!-- SIDEBAR PROGRESS TIMELINE -->
+            <aside class="card-clean" style="position: sticky; top: 90px; padding: 1.5rem; margin-bottom: 0;">
+                <h4 style="font-size: 0.85rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1.25rem;">
+                    Application Progress
+                </h4>
+
+                <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                    {[
+                        { num: 1, label: '1. Personal & Parent Info', desc: 'Contact details & location' },
+                        { num: 2, label: '2. Background & Skills', desc: 'Experience, languages & ML' },
+                        { num: 3, label: '3. Essays', desc: 'Two required essays' },
+                        { num: 4, label: '4. Review & Submit', desc: 'Final application check' }
+                    ].map((step) => (
+                        <button
+                            type="button"
+                            class="sidebar-step-btn"
+                            data-step={step.num}
+                            style="display: flex; align-items: flex-start; gap: 0.85rem; text-align: left; background: none; border: none; padding: 0.5rem; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s ease; width: 100%;"
                         >
-                            <span style="font-size: 1.5rem;">ℹ️</span>
-                            <div>
-                                <p
-                                    style="color: #0369a1; margin: 0; font-weight: 600;"
-                                >
-                                    Program Information
-                                </p>
-                                <p
-                                    style="color: #0369a1; margin: 0.25rem 0 0 0; font-size: 0.875rem;"
-                                >
-                                    Please note: This summer program is <strong
-                                        >not residential</strong
-                                    >. Students will commute daily to the
-                                    program location.
-                                </p>
+                            <div class={`step-num-bubble step-num-${step.num}`} style="width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px;">
                             </div>
-                        </div>
-                    </div>
-
-                    {
-                        !applicationsOpen && (
-                            <div
-                                class="card"
-                                style="background: #fef3cd; border: 1px solid #f59e0b; margin-bottom: 1.5rem;"
-                            >
-                                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                                    <span style="font-size: 1.5rem;">⚠️</span>
-                                    <div>
-                                        <p style="color: #92400e; margin: 0; font-weight: 600;">
-                                            Applications Currently Closed
-                                        </p>
-                                        <p style="color: #92400e; margin: 0.25rem 0 0 0; font-size: 0.875rem;">
-                                            You can still edit and save your
-                                            draft, but submissions are not
-                                            currently being accepted.
-                                        </p>
-                                    </div>
+                            <div>
+                                <div class={`step-title-text step-title-${step.num}`} style="font-size: 0.875rem; font-weight: 600; color: var(--slate-700);">
+                                    {step.label}
+                                </div>
+                                <div class={`step-status-subtext step-sub-${step.num}`} style="font-size: 0.775rem; color: var(--slate-500);">
+                                    {step.desc}
                                 </div>
                             </div>
-                        )
-                    }
+                        </button>
+                    ))}
+                </div>
 
-                    <!-- Recommendation Letter Information -->
-                    <div
-                        style="background: #f0f9ff; border: 1px solid #0284c7; border-radius: 8px; padding: 0.75rem; margin-bottom: 1.5rem;"
-                    >
-                        <div
-                            style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;"
-                        >
-                            <span style="font-size: 1.1rem;">📧</span>
-                            <h4
-                                style="color: #0284c7; margin: 0; font-size: 0.9rem; font-weight: 600;"
-                            >
-                                Recommendation Letter (Optional)
-                            </h4>
-                        </div>
-                        <p
-                            style="color: #0369a1; margin: 0; font-size: 0.8rem; line-height: 1.4;"
-                        >
-                            Have your teacher email a PDF/DOCX to <strong
-                                >wuethan@mit.edu</strong
-                            > with:<br />
-                            <span style="margin-left: 0.5rem;"
-                                >• File name:
-                            </span><code
-                                style="background: rgba(2, 132, 199, 0.15); padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.75rem;"
-                                >&lt;lastname&gt;-&lt;firstname&gt;-bootcamp-rec-letter</code
-                            ><br />
-                            <span style="margin-left: 0.5rem;"
-                                >• Subject:
-                            </span><strong
-                                >"Your Last Name, Your First Name Bootcamp
-                                Recommendation Letter"</strong
-                            >
+                <!-- Legend -->
+                <div style="margin-top: 1.5rem; border-top: 1px solid var(--slate-200); padding-top: 1rem; font-size: 0.75rem; color: var(--slate-600);">
+                    <div style="font-weight: 700; margin-bottom: 0.4rem; color: var(--slate-700);">Draft Status Legend:</div>
+                    <div style="display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.2rem;">
+                        <span style="width: 10px; height: 10px; border-radius: 50%; background: #16A34A; display: inline-block;"></span>
+                        Green: Complete
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.2rem;">
+                        <span style="width: 10px; height: 10px; border-radius: 50%; background: #D97706; display: inline-block;"></span>
+                        Yellow: Incomplete / In Progress
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.4rem;">
+                        <span style="width: 10px; height: 10px; border-radius: 50%; background: #334155; display: inline-block;"></span>
+                        Dark: Not Started
+                    </div>
+                </div>
+
+                <div style="margin-top: 1.25rem;">
+                    <button type="button" id="save-current-section-btn" class="btn btn-secondary btn-sm" style="width: 100%;">
+                        Save Current Section
+                    </button>
+                    <div id="section-save-status" style="font-size: 0.75rem; text-align: center; margin-top: 0.5rem;" aria-live="polite"></div>
+                </div>
+            </aside>
+
+            <!-- MAIN WIZARD FORM CONTAINER -->
+            <main>
+                <!-- Logistics Notices -->
+                <div class="notice-box notice-info" style="margin-bottom: 1.5rem;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                    <div>
+                        <div class="notice-title">Program Logistics Notice</div>
+                        <p class="notice-body">
+                            Please note: This summer bootcamp program is <strong>non-residential</strong>. Admitted students will commute daily to the MIT program location.
                         </p>
                     </div>
+                </div>
 
-                    <form method="POST" action="/api/submit-application">
-                        <!-- Personal Information -->
-                        <div class="card">
-                            <h3>Personal Information</h3>
+                <form method="POST" action="/api/submit-application" id="application-form">
+                    <input type="hidden" name="current_step" id="current_step_input" value={initialStep} />
+                    <input type="hidden" name="device_fp" id="applicant_device_fp_input" value="" />
 
-                            <div class="form-group">
-                                <label for="first_name"> First Name * </label>
-                                <input
-                                    type="text"
-                                    id="first_name"
-                                    name="first_name"
-                                    required
-                                    maxlength="50"
-                                    value={currentUser.first_name || ""}
-                                    placeholder="Enter your first name"
-                                />
+                    <!-- SECTION 1: PERSONAL, PARENT & RECOMMENDER INFORMATION -->
+                    <div id="form-section-1" class="wizard-section" style="display: none;">
+                        <div class="card-clean">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
+                                1. Personal & Location Details
+                            </h3>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem;">
+                                <div class="form-group">
+                                    <label class="form-label" for="first_name">First Name *</label>
+                                    <input
+                                        type="text"
+                                        id="first_name"
+                                        name="first_name"
+                                        class="input-field"
+                                        required
+                                        maxlength="50"
+                                        value={currentUser.first_name || ""}
+                                        placeholder="First name"
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="last_name">Last Name *</label>
+                                    <input
+                                        type="text"
+                                        id="last_name"
+                                        name="last_name"
+                                        class="input-field"
+                                        required
+                                        maxlength="50"
+                                        value={currentUser.last_name || ""}
+                                        placeholder="Last name"
+                                    />
+                                </div>
                             </div>
 
                             <div class="form-group">
-                                <label for="last_name"> Last Name * </label>
-                                <input
-                                    type="text"
-                                    id="last_name"
-                                    name="last_name"
-                                    required
-                                    maxlength="50"
-                                    value={currentUser.last_name || ""}
-                                    placeholder="Enter your last name"
-                                />
-                            </div>
-
-                            <div class="form-group">
-                                <label for="preferred_email">
-                                    Preferred Email Address *
-                                </label>
+                                <label class="form-label" for="preferred_email">Preferred Contact Email *</label>
                                 <input
                                     type="email"
                                     id="preferred_email"
                                     name="preferred_email"
+                                    class="input-field"
                                     required
                                     maxlength="100"
-                                    value={currentUser.preferred_email || ""}
-                                    placeholder="Enter your preferred email address"
+                                    value={currentUser.preferred_email || currentUser.email || ""}
+                                    placeholder="email@example.com"
                                 />
-                                <p
-                                    style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;"
-                                >
-                                    This is the email address we'll use to
-                                    contact you about your application.
-                                </p>
                             </div>
 
                             <div class="form-group">
-                                <label for="student_location">
-                                    Student Location *
-                                </label>
-                                <select
-                                    id="student_location"
-                                    name="student_location"
-                                    required
-                                >
-                                    <option value=""
-                                        >Select your location</option
-                                    >
-                                    <option
-                                        value="massachusetts"
-                                        selected={existingApplication?.student_location ===
-                                            "massachusetts" ||
-                                            draftData?.student_location ===
-                                                "massachusetts"}
-                                        >Massachusetts</option
-                                    >
-                                    <option
-                                        value="out_of_state"
-                                        selected={existingApplication?.student_location ===
-                                            "out_of_state" ||
-                                            draftData?.student_location ===
-                                                "out_of_state"}
-                                        >Out of State</option
-                                    >
-                                    <option
-                                        value="international"
-                                        selected={existingApplication?.student_location ===
-                                            "international" ||
-                                            draftData?.student_location ===
-                                                "international"}
-                                        >International</option
-                                    >
+                                <label class="form-label" for="student_location">Student Location *</label>
+                                <select id="student_location" name="student_location" class="select-field" required>
+                                    <option value="">Select location</option>
+                                    <option value="massachusetts" selected={currentLoc === "massachusetts"}>Massachusetts</option>
+                                    <option value="out_of_state" selected={currentLoc === "out_of_state"}>Out of State (US)</option>
+                                    <option value="international" selected={currentLoc === "international"}>International</option>
                                 </select>
-                                <p
-                                    style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;"
-                                >
-                                    Please indicate if you are based in
-                                    Massachusetts, another US state, or
-                                    international.
-                                </p>
+                            </div>
+
+                            <!-- Dynamic State / Country Select Dropdown -->
+                            <div class="form-group" id="location-detail-group" style={currentLoc === 'out_of_state' || currentLoc === 'international' ? '' : 'display: none;'}>
+                                <label class="form-label" for="location_detail" id="location-detail-label">
+                                    {currentLoc === 'international' ? 'Select Country *' : 'Select State *'}
+                                </label>
+                                <select id="location_detail" name="location_detail" class="select-field">
+                                    <option value="">Select option</option>
+                                </select>
                             </div>
                         </div>
 
-                        <!-- Essay Questions -->
-                        <div class="card">
-                            <h3>Essay Questions</h3>
+                        <!-- Parent / Guardian Information -->
+                        <div class="card-clean">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
+                                Parent / Guardian Contact Details
+                            </h3>
 
                             <div class="form-group">
-                                <label for="essay_one">
-                                    Essay 1: Tell us about yourself, your
-                                    interests in school, and why you want to
-                                    participate in this summer program (500-750
-                                    words)
+                                <label class="form-label" for="parent_name">Parent / Guardian Full Name *</label>
+                                <input
+                                    type="text"
+                                    id="parent_name"
+                                    name="parent_name"
+                                    class="input-field"
+                                    required
+                                    maxlength="100"
+                                    value={draftData?.parent_name || ""}
+                                    placeholder="e.g. Jane Doe"
+                                />
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="form-label" for="parent_email">Parent / Guardian Email *</label>
+                                    <input
+                                        type="email"
+                                        id="parent_email"
+                                        name="parent_email"
+                                        class="input-field"
+                                        required
+                                        maxlength="100"
+                                        value={draftData?.parent_email || ""}
+                                        placeholder="parent@example.com"
+                                    />
+                                </div>
+
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="form-label" for="parent_phone">Parent / Guardian Phone Number *</label>
+                                    <input
+                                        type="tel"
+                                        id="parent_phone"
+                                        name="parent_phone"
+                                        class="input-field"
+                                        required
+                                        maxlength="25"
+                                        value={draftData?.parent_phone || ""}
+                                        placeholder="(555) 123-4567"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Recommender Information -->
+                        <div class="card-clean">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
+                                Recommendation Letter Contact
+                            </h3>
+
+                            <div class="notice-box notice-warning" style="margin-bottom: 1.25rem; background: #FFFBEB; border-color: #FDE68A;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                </svg>
+                                <div>
+                                    <div class="notice-title" style="color: #B45309;">Applicant Responsibility Notice</div>
+                                    <p class="notice-body" style="color: #92400E;">
+                                        <strong>You (the applicant) are personally responsible for sending the recommendation link & PIN to your recommender.</strong> Once you save your draft, options to send or copy the email invitation will appear on your Applicant Dashboard.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem;">
+                                <div class="form-group">
+                                    <label class="form-label" for="recommender_name">Recommender Full Name *</label>
+                                    <input
+                                        type="text"
+                                        id="recommender_name"
+                                        name="recommender_name"
+                                        class="input-field"
+                                        required
+                                        maxlength="100"
+                                        value={draftData?.recommender_name || ""}
+                                        placeholder="e.g. Dr. Sarah Jenkins"
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="recommender_email">Recommender Email Address *</label>
+                                    <input
+                                        type="email"
+                                        id="recommender_email"
+                                        name="recommender_email"
+                                        class="input-field"
+                                        required
+                                        maxlength="100"
+                                        value={draftData?.recommender_email || ""}
+                                        placeholder="teacher@school.edu"
+                                    />
+                                </div>
+                            </div>
+
+                            <div class="form-group" style="margin-bottom: 1.25rem;">
+                                <label class="form-label" for="recommender_title">Recommender Title / School</label>
+                                <input
+                                    type="text"
+                                    id="recommender_title"
+                                    name="recommender_title"
+                                    class="input-field"
+                                    maxlength="150"
+                                    value={draftData?.recommender_title || ""}
+                                    placeholder="e.g. AP Computer Science Teacher, Newton High"
+                                />
+                            </div>
+
+                            <div style="background: var(--slate-50); border: 1px solid var(--slate-200); padding: 0.85rem 1rem; border-radius: var(--radius-sm);">
+                                <label style="display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; font-size: 0.825rem; color: var(--slate-800); font-weight: 500;">
+                                    <input type="checkbox" required checked style="accent-color: var(--brand-blue); margin-top: 2px;" />
+                                    I hereby waive my right to inspect or access this recommendation letter under FERPA guidelines, certifying that it will be submitted confidentially by my recommender.
+                                </label>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                            <button type="button" class="btn btn-secondary save-section-btn">
+                                Save Section Draft
+                            </button>
+                            <button type="button" class="btn btn-primary goto-step-btn" data-target="2">
+                                Next: Background & Skills →
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 2: BACKGROUND & TECHNICAL SKILLS -->
+                    <div id="form-section-2" class="wizard-section" style="display: none;">
+                        <div class="card-clean">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
+                                2. Background & Technical Experience
+                            </h3>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem;">
+                                <div class="form-group">
+                                    <label class="form-label" for="grade_level">Grade Level (Fall 2027) *</label>
+                                    <select id="grade_level" name="grade_level" class="select-field" required>
+                                        <option value="">Select grade</option>
+                                        <option value="9th" selected={draftData?.grade_level === "9th"}>9th Grade (Freshman)</option>
+                                        <option value="10th" selected={draftData?.grade_level === "10th"}>10th Grade (Sophomore)</option>
+                                        <option value="11th" selected={draftData?.grade_level === "11th"}>11th Grade (Junior)</option>
+                                        <option value="12th" selected={draftData?.grade_level === "12th"}>12th Grade (Senior)</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="programming_experience">Programming Experience *</label>
+                                    <select id="programming_experience" name="programming_experience" class="select-field" required>
+                                        <option value="">Select experience level</option>
+                                        <option value="none" selected={draftData?.programming_experience === "none"}>No programming experience</option>
+                                        <option value="beginner" selected={draftData?.programming_experience === "beginner"}>Beginner (Some Python/JS)</option>
+                                        <option value="intermediate" selected={draftData?.programming_experience === "intermediate"}>Intermediate (Built small projects)</option>
+                                        <option value="advanced" selected={draftData?.programming_experience === "advanced"}>Advanced (Data structures & algorithm experience)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Programming Languages Checkboxes -->
+                            <div class="form-group">
+                                <label class="form-label">Programming Languages Used * (Select all that apply or None)</label>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin-top: 0.4rem;">
+                                    {["Python", "Java", "JS/TS", "C++", "Rust", "Other", "None"].map((lang) => (
+                                        <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 0.85rem; background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); cursor: pointer; font-size: 0.85rem; font-weight: 500; white-space: nowrap;">
+                                            <input
+                                                type="checkbox"
+                                                name="languages"
+                                                class="lang-checkbox"
+                                                value={lang}
+                                                checked={draftData?.languages?.includes(lang)}
+                                                style="accent-color: var(--brand-blue);"
+                                            />
+                                            {lang}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <!-- Machine Learning Technologies Checkboxes -->
+                            <div class="form-group">
+                                <label class="form-label">Machine Learning Technologies & Frameworks Used * (Select all that apply or None)</label>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.75rem; margin-top: 0.4rem;">
+                                    {mlFrameworks.map((ml) => (
+                                        <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.65rem 0.85rem; background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); cursor: pointer; font-size: 0.825rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                            <input
+                                                type="checkbox"
+                                                name="ml_technologies"
+                                                class="ml-checkbox"
+                                                value={ml}
+                                                checked={draftData?.ml_technologies?.includes(ml)}
+                                                style="accent-color: var(--brand-blue); flex-shrink: 0;"
+                                            />
+                                            <span style="overflow: hidden; text-overflow: ellipsis;">{ml}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Research Experience *</label>
+                                <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.4rem;">
+                                    {[
+                                        { val: "yes", label: "Yes, I have conducted independent or lab research" },
+                                        { val: "coursework", label: "Only through high school coursework / class projects" },
+                                        { val: "no", label: "No prior research experience, but eager to learn" }
+                                    ].map((item) => (
+                                        <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 0.85rem; background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); cursor: pointer; font-size: 0.875rem; font-weight: 500;">
+                                            <input
+                                                type="radio"
+                                                name="research_experience"
+                                                value={item.val}
+                                                checked={draftData?.research_experience === item.val}
+                                                required
+                                                style="accent-color: var(--brand-blue);"
+                                            />
+                                            {item.label}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Financial Aid Needed? *</label>
+                                <div style="display: flex; gap: 0.75rem; margin-top: 0.25rem;">
+                                    <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.65rem; background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-size: 0.875rem;">
+                                        <input
+                                            type="radio"
+                                            name="needs_financial_aid"
+                                            value="yes"
+                                            checked={existingApplication?.needs_financial_aid === 1 || draftData?.needs_financial_aid === "yes"}
+                                            required
+                                            style="accent-color: var(--brand-blue);"
+                                        />
+                                        Yes
+                                    </label>
+                                    <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.65rem; background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-size: 0.875rem;">
+                                        <input
+                                            type="radio"
+                                            name="needs_financial_aid"
+                                            value="no"
+                                            checked={existingApplication?.needs_financial_aid === 0 || draftData?.needs_financial_aid === "no"}
+                                            required
+                                            style="accent-color: var(--brand-blue);"
+                                        />
+                                        No
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="clubs_activities">Clubs, Activities & Leadership *</label>
+                                <textarea
+                                    id="clubs_activities"
+                                    name="clubs_activities"
+                                    class="textarea-field"
+                                    rows="3"
+                                    maxlength="1000"
+                                    required
+                                    placeholder="List robotics club, debate team, sports, volunteering, or leadership roles..."
+                                >{draftData?.clubs_activities || ""}</textarea>
+                            </div>
+
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label" for="final_thoughts">Additional Information / Final Thoughts *</label>
+                                <textarea
+                                    id="final_thoughts"
+                                    name="final_thoughts"
+                                    class="textarea-field"
+                                    rows="3"
+                                    maxlength="1500"
+                                    required
+                                    placeholder="Share any extra context, personal circumstances, or information for the admissions committee..."
+                                >{draftData?.final_thoughts || ""}</textarea>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                            <button type="button" class="btn btn-secondary goto-step-btn" data-target="1">
+                                ← Back: Personal Info
+                            </button>
+                            <div style="display: flex; gap: 0.75rem;">
+                                <button type="button" class="btn btn-secondary save-section-btn">
+                                    Save Section Draft
+                                </button>
+                                <button type="button" class="btn btn-primary goto-step-btn" data-target="3">
+                                    Next: Essays →
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 3: ESSAY RESPONSES -->
+                    <div id="form-section-3" class="wizard-section" style="display: none;">
+                        <div class="card-clean">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
+                                3. Essay Responses
+                            </h3>
+
+                            <!-- Essay 1 -->
+                            <div class="form-group">
+                                <label class="form-label" for="essay_one">
+                                    Essay 1: Background & Academic Motivation *
+                                    <span style="font-weight: 400; color: var(--slate-600); display: block; font-size: 0.85rem; margin-top: 0.2rem;">
+                                        Tell us about yourself, your interests in school, and why you want to participate in this summer bootcamp. (Target: 500–750 words)
+                                    </span>
                                 </label>
                                 <textarea
                                     id="essay_one"
                                     name="essay_one"
-                                    rows="10"
+                                    class="textarea-field"
+                                    rows="8"
                                     required
                                     maxlength="5000"
                                     placeholder="Write your response here..."
-                                    >{
-                                        existingApplication
-                                            ? existingApplication.essay_one ||
-                                              ""
-                                            : ""
-                                    }</textarea
-                                >
-                                <p
-                                    style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;"
-                                >
-                                    Character count: <span id="essay-one-count"
-                                        >0</span
-                                    >/5000
-                                </p>
+                                >{existingApplication ? existingApplication.essay_one || "" : ""}</textarea>
+                                
+                                <div class="counter-bar" aria-live="polite">
+                                    <span>Characters: <strong id="essay-one-chars">0</strong>/5000</span>
+                                    <span id="essay-one-words-badge" class="badge-pill pill-neutral">
+                                        Words: <strong id="essay-one-words">0</strong> (Target: 500–750)
+                                    </span>
+                                </div>
                             </div>
 
-                            <div class="form-group">
-                                <label for="essay_two">
-                                    Essay 2: What are your future goals and how
-                                    do you think this summer program will help
-                                    you explore potential career paths? (500-750
-                                    words)
+                            <!-- Essay 2 -->
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label" for="essay_two">
+                                    Essay 2: Future Goals & Career Exploration *
+                                    <span style="font-weight: 400; color: var(--slate-600); display: block; font-size: 0.85rem; margin-top: 0.2rem;">
+                                        What are your future goals and how do you think this summer program will help you explore potential career paths? (Target: 500–750 words)
+                                    </span>
                                 </label>
                                 <textarea
                                     id="essay_two"
                                     name="essay_two"
-                                    rows="10"
+                                    class="textarea-field"
+                                    rows="8"
                                     required
                                     maxlength="5000"
                                     placeholder="Write your response here..."
-                                    >{
-                                        existingApplication
-                                            ? existingApplication.essay_two ||
-                                              ""
-                                            : ""
-                                    }</textarea
-                                >
-                                <p
-                                    style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;"
-                                >
-                                    Character count: <span id="essay-two-count"
-                                        >0</span
-                                    >/5000
-                                </p>
+                                >{existingApplication ? existingApplication.essay_two || "" : ""}</textarea>
+                                
+                                <div class="counter-bar" aria-live="polite">
+                                    <span>Characters: <strong id="essay-two-chars">0</strong>/5000</span>
+                                    <span id="essay-two-words-badge" class="badge-pill pill-neutral">
+                                        Words: <strong id="essay-two-words">0</strong> (Target: 500–750)
+                                    </span>
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Short Answer Questions -->
-                        <div class="card">
-                            <h3>Additional Questions</h3>
-
-                            <div class="form-group">
-                                <label for="programming_experience">
-                                    Do you have programming experience? This
-                                    helps us with placing admitted students in
-                                    our beginner and advanced coding courses.
-                                </label>
-                                <select
-                                    id="programming_experience"
-                                    name="programming_experience"
-                                    required
-                                >
-                                    <option value="">Select an option</option>
-                                    <option
-                                        value="none"
-                                        selected={draftData?.programming_experience ===
-                                            "none"}>No experience</option
-                                    >
-                                    <option
-                                        value="beginner"
-                                        selected={draftData?.programming_experience ===
-                                            "beginner"}>Beginner</option
-                                    >
-                                    <option
-                                        value="intermediate"
-                                        selected={draftData?.programming_experience ===
-                                            "intermediate"}>Intermediate</option
-                                    >
-                                    <option
-                                        value="advanced"
-                                        selected={draftData?.programming_experience ===
-                                            "advanced"}>Advanced</option
-                                    >
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="languages">
-                                    If you did not select no experience, which
-                                    programming languages are you familiar with?
-                                    (Select all that apply)
-                                </label>
-                                <div class="checkbox-grid">
-                                    {
-                                        [
-                                            "None",
-                                            "Python",
-                                            "Java",
-                                            "JS/TS",
-                                            "C++",
-                                            "Rust",
-                                            "Other",
-                                        ].map((lang) => (
-                                            <div class="checkbox-item">
-                                                <input
-                                                    type="checkbox"
-                                                    name="languages"
-                                                    value={lang}
-                                                    checked={draftData?.languages?.includes(
-                                                        lang,
-                                                    )}
-                                                />
-                                                <span>{lang}</span>
-                                            </div>
-                                        ))
-                                    }
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label
-                                    >Do you have research experience? This will
-                                    not be factored into admissions, it is only
-                                    to help us decide final project
-                                    arrangementsfor admitted students.</label
-                                >
-                                <div style="margin-top: 0.5rem;">
-                                    <div
-                                        class="radio-item"
-                                        style="margin-bottom: 0.5rem;"
-                                    >
-                                        <input
-                                            type="radio"
-                                            name="research_experience"
-                                            value="yes"
-                                            checked={draftData?.research_experience ===
-                                                "yes"}
-                                            required
-                                        />
-                                        <span
-                                            >Yes, I have conducted research
-                                            before</span
-                                        >
-                                    </div>
-                                    <div
-                                        class="radio-item"
-                                        style="margin-bottom: 0.5rem;"
-                                    >
-                                        <input
-                                            type="radio"
-                                            name="research_experience"
-                                            value="coursework"
-                                            checked={draftData?.research_experience ===
-                                                "coursework"}
-                                            required
-                                        />
-                                        <span
-                                            >Only through coursework/class
-                                            projects</span
-                                        >
-                                    </div>
-                                    <div class="radio-item">
-                                        <input
-                                            type="radio"
-                                            name="research_experience"
-                                            value="no"
-                                            checked={draftData?.research_experience ===
-                                                "no"}
-                                            required
-                                        />
-                                        <span>No, but I'm eager to learn</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="grade_level">
-                                    What grade will you be entering in Fall2026?
-                                </label>
-                                <select
-                                    id="grade_level"
-                                    name="grade_level"
-                                    required
-                                >
-                                    <option value="">Select your grade</option>
-                                    <option
-                                        value="9th"
-                                        selected={draftData?.grade_level ===
-                                            "9th"}>9th Grade (Freshman)</option
-                                    >
-                                    <option
-                                        value="10th"
-                                        selected={draftData?.grade_level ===
-                                            "10th"}
-                                        >10th Grade (Sophomore)</option
-                                    >
-                                    <option
-                                        value="11th"
-                                        selected={draftData?.grade_level ===
-                                            "11th"}>11th Grade (Junior)</option
-                                    >
-                                    <option
-                                        value="12th"
-                                        selected={draftData?.grade_level ===
-                                            "12th"}>12th Grade (Senior)</option
-                                    >
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label>
-                                    The program costs amount to $2000. Do you
-                                    need financial aid?
-                                </label>
-                                <div style="margin-top: 0.5rem;">
-                                    <div
-                                        class="radio-item"
-                                        style="margin-bottom: 0.5rem;"
-                                    >
-                                        <input
-                                            type="radio"
-                                            name="needs_financial_aid"
-                                            value="yes"
-                                            checked={existingApplication?.needs_financial_aid ===
-                                                1 ||
-                                                draftData?.needs_financial_aid ===
-                                                    "yes"}
-                                            required
-                                        />
-                                        <span>Yes, I need financial aid</span>
-                                    </div>
-                                    <div class="radio-item">
-                                        <input
-                                            type="radio"
-                                            name="needs_financial_aid"
-                                            value="no"
-                                            checked={existingApplication?.needs_financial_aid ===
-                                                0 ||
-                                                draftData?.needs_financial_aid ===
-                                                    "no"}
-                                            required
-                                        />
-                                        <span
-                                            >No, I do not need financial aid</span
-                                        >
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="clubs_activities">
-                                    List your school clubs, activities, and any
-                                    leadership positions you are involved in.
-                                </label>
-                                <textarea
-                                    id="clubs_activities"
-                                    name="clubs_activities"
-                                    rows="4"
-                                    maxlength="1000"
-                                    required
-                                    placeholder="e.g., Student Council, Drama Club, Basketball Team, Debate Team Captain, Volunteer Work, etc."
-                                    >{
-                                        draftData?.clubs_activities || ""
-                                    }</textarea
-                                >
-                            </div>
-
-                            <div class="form-group">
-                                <label for="final_thoughts">
-                                    Is there anything else you’d like to share
-                                    with us that is not already covered?
-                                </label>
-                                <textarea
-                                    id="final_thoughts"
-                                    name="final_thoughts"
-                                    rows="5"
-                                    maxlength="1500"
-                                    required
-                                    placeholder="Share any additional thoughts, experiences, or information you feel would be valuable for your application..."
-                                    >{draftData?.final_thoughts || ""}</textarea
-                                >
-                            </div>
-                        </div>
-
-                        <div
-                            style="display: flex; justify-content: space-between; align-items: center; margin-top: 2rem;"
-                        >
-                            <div
-                                style="display: flex; align-items: center; gap: 1rem;"
-                            >
-                                <button
-                                    type="button"
-                                    id="save-draft-btn"
-                                    class="btn btn-secondary"
-                                    style="padding: 1rem 1.5rem;"
-                                >
-                                    Save Draft
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                            <button type="button" class="btn btn-secondary goto-step-btn" data-target="2">
+                                ← Back: Background & Skills
+                            </button>
+                            <div style="display: flex; gap: 0.75rem;">
+                                <button type="button" class="btn btn-secondary save-section-btn">
+                                    Save Section Draft
                                 </button>
-                                <a
-                                    href="/dashboard"
-                                    style="color: #6b7280; text-decoration: underline;"
-                                    >← Back to Dashboard</a
-                                >
+                                <button type="button" class="btn btn-primary goto-step-btn" data-target="4">
+                                    Next: Review Application →
+                                </button>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 4: REVIEW & FINAL SUBMIT (Full Information Summary) -->
+                    <div id="form-section-4" class="wizard-section" style="display: none;">
+                        <div class="card-clean">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
+                                4. Review & Submit Application
+                            </h3>
+
+                            <p style="color: var(--slate-600); font-size: 0.925rem; margin-bottom: 1.5rem;">
+                                Please review the summary of your provided information below before submitting.
+                            </p>
+
+                            <!-- Live Application Summary Preview -->
+                            <div style="display: flex; flex-direction: column; gap: 1.25rem; margin-bottom: 1.75rem;">
+                                
+                                <!-- Personal, Parent & Recommender Summary Card -->
+                                <div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.25rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.5rem;">
+                                        <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin: 0;">1. Personal, Parent & Recommender Details</h4>
+                                        <button type="button" class="btn btn-secondary btn-sm goto-step-btn" data-target="1" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">Edit Section 1</button>
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; font-size: 0.875rem;">
+                                        <div><strong>Student Name:</strong> <span id="rev-student-name">-</span></div>
+                                        <div><strong>Contact Email:</strong> <span id="rev-contact-email">-</span></div>
+                                        <div><strong>Location:</strong> <span id="rev-location">-</span></div>
+                                        <div><strong>Parent Name:</strong> <span id="rev-parent-name">-</span></div>
+                                        <div><strong>Parent Email:</strong> <span id="rev-parent-email">-</span></div>
+                                        <div><strong>Parent Phone:</strong> <span id="rev-parent-phone">-</span></div>
+                                        <div><strong>Recommender Name:</strong> <span id="rev-rec-name">-</span></div>
+                                        <div><strong>Recommender Email:</strong> <span id="rev-rec-email">-</span></div>
+                                    </div>
+                                </div>
+
+                                <!-- Background & Skills Summary Card -->
+                                <div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.25rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.5rem;">
+                                        <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin: 0;">2. Background & Technical Skills</h4>
+                                        <button type="button" class="btn btn-secondary btn-sm goto-step-btn" data-target="2" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">Edit Section 2</button>
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; font-size: 0.875rem; margin-bottom: 0.75rem;">
+                                        <div><strong>Grade Level:</strong> <span id="rev-grade">-</span></div>
+                                        <div><strong>Coding Level:</strong> <span id="rev-prog-exp">-</span></div>
+                                        <div><strong>Financial Aid Needed:</strong> <span id="rev-aid">-</span></div>
+                                        <div><strong>Research Experience:</strong> <span id="rev-research">-</span></div>
+                                    </div>
+                                    <div style="font-size: 0.875rem; margin-bottom: 0.5rem;">
+                                        <strong>Languages:</strong> <span id="rev-languages">-</span>
+                                    </div>
+                                    <div style="font-size: 0.875rem;">
+                                        <strong>ML Frameworks:</strong> <span id="rev-ml">-</span>
+                                    </div>
+                                </div>
+
+                                <!-- Essays Summary Card -->
+                                <div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.25rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.5rem;">
+                                        <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin: 0;">3. Essays Summary</h4>
+                                        <button type="button" class="btn btn-secondary btn-sm goto-step-btn" data-target="3" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">Edit Section 3</button>
+                                    </div>
+                                    <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.875rem;">
+                                        <div>
+                                            <strong>Essay 1 Status:</strong> <span id="rev-essay1-status">-</span>
+                                            <p id="rev-essay1-preview" style="font-style: italic; color: var(--slate-600); margin-top: 0.25rem; font-size: 0.825rem; max-height: 60px; overflow: hidden; text-overflow: ellipsis;"></p>
+                                        </div>
+                                        <div>
+                                            <strong>Essay 2 Status:</strong> <span id="rev-essay2-status">-</span>
+                                            <p id="rev-essay2-preview" style="font-style: italic; color: var(--slate-600); margin-top: 0.25rem; font-size: 0.825rem; max-height: 60px; overflow: hidden; text-overflow: ellipsis;"></p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+
                             <button
                                 type="submit"
                                 class="btn btn-primary"
-                                style={`padding: 1rem 2rem; ${!applicationsOpen ? "opacity: 0.6; cursor: not-allowed;" : ""}`}
+                                style="width: 100%; padding: 0.85rem;"
                                 disabled={!applicationsOpen}
-                                title={!applicationsOpen
-                                    ? "Applications are currently closed"
-                                    : ""}
                             >
-                                {
-                                    applicationsOpen
-                                        ? "Submit Application"
-                                        : "Applications Closed"
-                                }
+                                {applicationsOpen ? "Submit Final Application" : "Submissions Closed"}
                             </button>
                         </div>
-                        <div
-                            id="save-status"
-                            style="margin-top: 1rem; text-align: center; display: none;"
-                        >
+
+                        <div style="display: flex; justify-content: flex-start;">
+                            <button type="button" class="btn btn-secondary goto-step-btn" data-target="3">
+                                ← Back to Essays
+                            </button>
                         </div>
-                    </form>
-                </div>
-            </div>
+                    </div>
 
-            <script is:inline define:vars={{ draftData }}>
-                // Draft data from server
-                console.log("Draft data loaded:", draftData);
+                </form>
+            </main>
 
-                // Character counters for essays
-                function updateCharacterCount() {
-                    const essayOne = document.getElementById("essay_one");
-                    const essayTwo = document.getElementById("essay_two");
-                    document.getElementById("essay-one-count").textContent =
-                        essayOne.value.length;
-                    document.getElementById("essay-two-count").textContent =
-                        essayTwo.value.length;
+        </div>
+
+    </div>
+
+    <!-- Data arrays for client side -->
+    <script is:inline define:vars={{ usStates, countries, currentLocDetail, initialStep, initialSectionStatuses }}>
+        window.US_STATES = usStates;
+        window.COUNTRIES = countries;
+        window.INITIAL_LOC_DETAIL = currentLocDetail;
+        window.INITIAL_STEP = initialStep;
+        window.INITIAL_SECTION_STATUSES = initialSectionStatuses;
+    </script>
+
+    <!-- Client-side Script -->
+    <script is:inline>
+        function getDeviceFingerprint() {
+            const nav = window.navigator;
+            const screen = window.screen;
+            const raw = [
+                nav.userAgent,
+                nav.language,
+                screen.colorDepth,
+                screen.width + 'x' + screen.height,
+                new Date().getTimezoneOffset(),
+                nav.hardwareConcurrency || 'unk'
+            ].join('||');
+            
+            let hash = 0;
+            for (let i = 0; i < raw.length; i++) {
+                const char = raw.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash |= 0;
+            }
+            return 'fp_' + Math.abs(hash).toString(36);
+        }
+
+        let currentStep = window.INITIAL_STEP || 1;
+        let sectionStatuses = window.INITIAL_SECTION_STATUSES || { sec1: 'not_started', sec2: 'not_started', sec3: 'not_started' };
+
+        function evaluateClientSectionStatuses() {
+            // Sec 1
+            const fName = document.getElementById('first_name')?.value?.trim();
+            const lName = document.getElementById('last_name')?.value?.trim();
+            const pEmail = document.getElementById('preferred_email')?.value?.trim();
+            const pName = document.getElementById('parent_name')?.value?.trim();
+            const parEmail = document.getElementById('parent_email')?.value?.trim();
+            const pPhone = document.getElementById('parent_phone')?.value?.trim();
+            const recName = document.getElementById('recommender_name')?.value?.trim();
+            const recEmail = document.getElementById('recommender_email')?.value?.trim();
+            const loc = document.getElementById('student_location')?.value;
+
+            const sec1Filled = [fName, lName, pEmail, pName, parEmail, pPhone, recName, recEmail, loc].filter(Boolean).length;
+            if (sec1Filled === 9) sectionStatuses.sec1 = 'complete';
+            else if (sec1Filled > 0) sectionStatuses.sec1 = 'incomplete';
+            else sectionStatuses.sec1 = 'not_started';
+
+            // Sec 2
+            const grade = document.getElementById('grade_level')?.value;
+            const prog = document.getElementById('programming_experience')?.value;
+            const langs = Array.from(document.querySelectorAll('.lang-checkbox:checked'));
+            const mls = Array.from(document.querySelectorAll('.ml-checkbox:checked'));
+            const res = document.querySelector('input[name="research_experience"]:checked');
+            const aid = document.querySelector('input[name="needs_financial_aid"]:checked');
+            const clubs = document.getElementById('clubs_activities')?.value?.trim();
+            const thoughts = document.getElementById('final_thoughts')?.value?.trim();
+
+            const sec2Filled = [grade, prog, langs.length > 0, mls.length > 0, res, aid, clubs, thoughts].filter(Boolean).length;
+            if (sec2Filled === 8) sectionStatuses.sec2 = 'complete';
+            else if (sec2Filled > 0) sectionStatuses.sec2 = 'incomplete';
+            else sectionStatuses.sec2 = 'not_started';
+
+            // Sec 3: BOTH essays MUST have text to be complete
+            const e1 = document.getElementById('essay_one')?.value?.trim() || '';
+            const e2 = document.getElementById('essay_two')?.value?.trim() || '';
+
+            if (e1.length > 0 && e2.length > 0) {
+                sectionStatuses.sec3 = 'complete';
+            } else if (e1.length > 0 || e2.length > 0) {
+                sectionStatuses.sec3 = 'incomplete';
+            } else {
+                sectionStatuses.sec3 = 'not_started';
+            }
+
+            updateSidebarBubbles();
+            populateReviewSummary();
+        }
+
+        function updateSidebarBubbles() {
+            const statusMap = {
+                1: sectionStatuses.sec1,
+                2: sectionStatuses.sec2,
+                3: sectionStatuses.sec3,
+                4: (sectionStatuses.sec1 === 'complete' && sectionStatuses.sec2 === 'complete' && sectionStatuses.sec3 === 'complete') ? 'complete' : 'incomplete'
+            };
+
+            document.querySelectorAll('.sidebar-step-btn').forEach(btn => {
+                const s = parseInt(btn.getAttribute('data-step'));
+                const bubble = btn.querySelector('.step-num-bubble');
+                const title = btn.querySelector('.step-title-text');
+                const status = statusMap[s] || 'not_started';
+
+                if (bubble) {
+                    if (status === 'complete') {
+                        bubble.style.background = '#16A34A';
+                        bubble.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    } else if (status === 'incomplete') {
+                        bubble.style.background = '#D97706';
+                        bubble.innerHTML = '<div style="width: 8px; height: 8px; border-radius: 50%; background: #FFFFFF;"></div>';
+                    } else {
+                        bubble.style.background = '#334155';
+                        bubble.innerHTML = '<div style="width: 6px; height: 6px; border-radius: 50%; background: #94A3B8;"></div>';
+                    }
                 }
 
-                // Initialize character counts on page load
-                updateCharacterCount();
+                const subText = btn.querySelector('.step-status-subtext');
+                if (subText) {
+                    subText.textContent = status === 'complete' ? 'Complete' : status === 'incomplete' ? 'In Progress' : 'Not Started';
+                }
 
-                // Debug current form state after page load
-                setTimeout(() => {
-                    console.log("Form state after load:", {
-                        programmingSelect: document.getElementById(
-                            "programming_experience",
-                        ),
-                        programmingValue: document.getElementById(
-                            "programming_experience",
-                        )?.value,
-                        programmingSelectedIndex: document.getElementById(
-                            "programming_experience",
-                        )?.selectedIndex,
-                        gradeSelect: document.getElementById("grade_level"),
-                        gradeValue:
-                            document.getElementById("grade_level")?.value,
-                        gradeSelectedIndex:
-                            document.getElementById("grade_level")
-                                ?.selectedIndex,
-                    });
-                }, 100);
+                if (s === currentStep) {
+                    btn.style.background = 'var(--brand-blue-light)';
+                    if (title) title.style.color = 'var(--brand-blue)';
+                } else {
+                    btn.style.background = 'none';
+                    if (title) title.style.color = 'var(--slate-800)';
+                }
+            });
+        }
 
-                document
-                    .getElementById("essay_one")
-                    .addEventListener("input", function () {
-                        document.getElementById("essay-one-count").textContent =
-                            this.value.length;
-                    });
+        function populateReviewSummary() {
+            const fName = document.getElementById('first_name')?.value?.trim() || '';
+            const lName = document.getElementById('last_name')?.value?.trim() || '';
+            document.getElementById('rev-student-name').textContent = `${fName} ${lName}`.trim() || 'Not provided';
+            document.getElementById('rev-contact-email').textContent = document.getElementById('preferred_email')?.value?.trim() || 'Not provided';
 
-                document
-                    .getElementById("essay_two")
-                    .addEventListener("input", function () {
-                        document.getElementById("essay-two-count").textContent =
-                            this.value.length;
-                    });
+            const loc = document.getElementById('student_location')?.value;
+            const locDetail = document.getElementById('location_detail')?.value;
+            let displayLoc = 'Massachusetts';
+            if (loc === 'out_of_state') displayLoc = locDetail ? `Out of State (${locDetail})` : 'Out of State (US)';
+            else if (loc === 'international') displayLoc = locDetail ? `International (${locDetail})` : 'International';
+            document.getElementById('rev-location').textContent = loc ? displayLoc : 'Not provided';
 
-                // Save draft functionality
-                document
-                    .getElementById("save-draft-btn")
-                    .addEventListener("click", async function () {
-                        const saveBtn = this;
-                        const originalText = saveBtn.textContent;
-                        const statusDiv =
-                            document.getElementById("save-status");
+            document.getElementById('rev-parent-name').textContent = document.getElementById('parent_name')?.value?.trim() || 'Not provided';
+            document.getElementById('rev-parent-email').textContent = document.getElementById('parent_email')?.value?.trim() || 'Not provided';
+            document.getElementById('rev-parent-phone').textContent = document.getElementById('parent_phone')?.value?.trim() || 'Not provided';
 
-                        // Disable button and show loading state
-                        saveBtn.disabled = true;
-                        saveBtn.textContent = "Saving...";
+            document.getElementById('rev-rec-name').textContent = document.getElementById('recommender_name')?.value?.trim() || 'Not provided';
+            document.getElementById('rev-rec-email').textContent = document.getElementById('recommender_email')?.value?.trim() || 'Not provided';
 
-                        try {
-                            // Get form data - target the application form specifically
-                            const form = document.querySelector(
-                                'form[action="/api/submit-application"]',
-                            );
+            document.getElementById('rev-grade').textContent = document.getElementById('grade_level')?.value || 'Not provided';
+            document.getElementById('rev-prog-exp').textContent = document.getElementById('programming_experience')?.value || 'Not provided';
 
-                            if (!form) {
-                                throw new Error(
-                                    "Could not find the application form",
-                                );
-                            }
+            const aid = document.querySelector('input[name="needs_financial_aid"]:checked')?.value;
+            document.getElementById('rev-aid').textContent = aid ? (aid === 'yes' ? 'Yes' : 'No') : 'Not selected';
 
-                            // Debug: Check actual DOM values before FormData creation
-                            console.log("DOM values before FormData:", {
-                                programming:
-                                    document.getElementById(
-                                        "programming_experience",
-                                    )?.value || "EMPTY",
-                                gradeLevel:
-                                    document.getElementById("grade_level")
-                                        ?.value || "EMPTY",
-                                researchChecked:
-                                    document.querySelector(
-                                        'input[name="research_experience"]:checked',
-                                    )?.value || "NONE_CHECKED",
-                            });
+            const res = document.querySelector('input[name="research_experience"]:checked')?.value;
+            document.getElementById('rev-research').textContent = res || 'Not selected';
 
-                            const formData = new FormData(form);
+            const langs = Array.from(document.querySelectorAll('.lang-checkbox:checked')).map(c => c.value);
+            document.getElementById('rev-languages').textContent = langs.length ? langs.join(', ') : 'None selected';
 
-                            // Send to save-draft endpoint
-                            const response = await fetch("/api/save-draft", {
-                                method: "POST",
-                                body: formData,
-                            });
+            const mls = Array.from(document.querySelectorAll('.ml-checkbox:checked')).map(c => c.value);
+            document.getElementById('rev-ml').textContent = mls.length ? mls.join(', ') : 'None selected';
 
-                            const result = await response.json();
+            const e1 = document.getElementById('essay_one')?.value?.trim() || '';
+            const e2 = document.getElementById('essay_two')?.value?.trim() || '';
+            const w1 = e1 ? e1.split(/\s+/).length : 0;
+            const w2 = e2 ? e2.split(/\s+/).length : 0;
 
-                            if (response.ok) {
-                                statusDiv.style.display = "block";
-                                statusDiv.innerHTML =
-                                    '<div class="alert alert-success">Draft saved successfully!</div>';
-                                setTimeout(() => {
-                                    statusDiv.style.display = "none";
-                                }, 3000);
-                            } else {
-                                throw new Error(
-                                    result.error || "Failed to save draft",
-                                );
-                            }
-                        } catch (error) {
-                            statusDiv.style.display = "block";
-                            statusDiv.innerHTML =
-                                '<div class="alert alert-error">Error saving draft: ' +
-                                error.message +
-                                "</div>";
-                            setTimeout(() => {
-                                statusDiv.style.display = "none";
-                            }, 5000);
-                        } finally {
-                            // Re-enable button
-                            saveBtn.disabled = false;
-                            saveBtn.textContent = originalText;
-                        }
-                    });
-            </script>
-        </div>
-    </main>
+            document.getElementById('rev-essay1-status').textContent = e1 ? `Provided (${w1} words)` : 'Empty';
+            document.getElementById('rev-essay1-preview').textContent = e1 ? `"${e1.slice(0, 150)}..."` : 'No text entered.';
+
+            document.getElementById('rev-essay2-status').textContent = e2 ? `Provided (${w2} words)` : 'Empty';
+            document.getElementById('rev-essay2-preview').textContent = e2 ? `"${e2.slice(0, 150)}..."` : 'No text entered.';
+        }
+
+        function showStep(stepNum) {
+            currentStep = stepNum;
+            document.getElementById('current_step_input').value = stepNum;
+
+            // Hide all section divs
+            document.querySelectorAll('.wizard-section').forEach(sec => {
+                sec.style.display = 'none';
+            });
+            // Show target section
+            const targetSec = document.getElementById(`form-section-${stepNum}`);
+            if (targetSec) targetSec.style.display = 'block';
+
+            evaluateClientSectionStatuses();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Handle Sidebar & Next/Prev navigation
+        document.querySelectorAll('.sidebar-step-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const s = parseInt(this.getAttribute('data-step'));
+                showStep(s);
+            });
+        });
+
+        document.querySelectorAll('.goto-step-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const target = parseInt(this.getAttribute('data-target'));
+                showStep(target);
+            });
+        });
+
+        // Mutual Exclusion for Checkboxes ("None" handling)
+        function handleExclusiveCheckboxes(checkboxClass) {
+            const boxes = document.querySelectorAll(`.${checkboxClass}`);
+            boxes.forEach(box => {
+                box.addEventListener('change', function() {
+                    if (this.value === 'None' && this.checked) {
+                        boxes.forEach(b => {
+                            if (b.value !== 'None') b.checked = false;
+                        });
+                    } else if (this.value !== 'None' && this.checked) {
+                        boxes.forEach(b => {
+                            if (b.value === 'None') b.checked = false;
+                        });
+                    }
+                    evaluateClientSectionStatuses();
+                });
+            });
+        }
+
+        // Real-time Word Counter
+        function countWords(str) {
+            const trimmed = str.trim();
+            return trimmed ? trimmed.split(/\s+/).length : 0;
+        }
+
+        function updateCounters(textareaId, charId, badgeId) {
+            const text = document.getElementById(textareaId).value;
+            const charCount = text.length;
+            const wordCount = countWords(text);
+
+            document.getElementById(charId).textContent = charCount;
+
+            const badge = document.getElementById(badgeId);
+            if (wordCount >= 500 && wordCount <= 750) {
+                badge.className = "badge-pill pill-success";
+                badge.innerHTML = `Words: <strong>${wordCount}</strong> (Target 500–750 met)`;
+            } else if (wordCount > 0) {
+                badge.className = "badge-pill pill-warning";
+                badge.innerHTML = `Words: <strong>${wordCount}</strong> (Target: 500–750 words)`;
+            } else {
+                badge.className = "badge-pill pill-neutral";
+                badge.innerHTML = `Words: <strong>0</strong> (Target: 500–750 words)`;
+            }
+            evaluateClientSectionStatuses();
+        }
+
+        // Dynamic Location Detail Dropdown
+        const locationSelect = document.getElementById('student_location');
+        const locationDetailGroup = document.getElementById('location-detail-group');
+        const locationDetailLabel = document.getElementById('location-detail-label');
+        const locationDetailSelect = document.getElementById('location_detail');
+
+        function updateLocationDetail() {
+            const val = locationSelect.value;
+            const initialVal = window.INITIAL_LOC_DETAIL || '';
+
+            if (val === 'out_of_state') {
+                locationDetailGroup.style.display = 'block';
+                locationDetailLabel.textContent = 'Select State *';
+                locationDetailSelect.required = true;
+                populateOptions(window.US_STATES, initialVal);
+            } else if (val === 'international') {
+                locationDetailGroup.style.display = 'block';
+                locationDetailLabel.textContent = 'Select Country *';
+                locationDetailSelect.required = true;
+                populateOptions(window.COUNTRIES, initialVal);
+            } else {
+                locationDetailGroup.style.display = 'none';
+                locationDetailSelect.required = false;
+                locationDetailSelect.innerHTML = '<option value="">Select option</option>';
+            }
+            evaluateClientSectionStatuses();
+        }
+
+        function populateOptions(list, selectedValue) {
+            let html = '<option value="">Select option</option>';
+            list.forEach(item => {
+                const isSel = (item.toLowerCase() === selectedValue.toLowerCase()) ? 'selected' : '';
+                html += `<option value="${item}" ${isSel}>${item}</option>`;
+            });
+            locationDetailSelect.innerHTML = html;
+        }
+
+        locationSelect?.addEventListener('change', updateLocationDetail);
+
+        // Section Draft Save AJAX
+        async function saveSectionDraft() {
+            const statusDiv = document.getElementById('section-save-status');
+            statusDiv.style.color = 'var(--slate-600)';
+            statusDiv.textContent = 'Saving draft...';
+
+            try {
+                const form = document.getElementById('application-form');
+                const formData = new FormData(form);
+
+                const res = await fetch('/api/save-draft', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    statusDiv.style.color = 'var(--success-green)';
+                    statusDiv.textContent = '✓ Section Draft Saved';
+                    evaluateClientSectionStatuses();
+                    setTimeout(() => { statusDiv.textContent = ''; }, 3000);
+                } else {
+                    throw new Error(data.error || 'Failed to save');
+                }
+            } catch (err) {
+                statusDiv.style.color = '#DC2626';
+                statusDiv.textContent = 'Error saving draft';
+            }
+        }
+
+        document.getElementById('save-current-section-btn')?.addEventListener('click', saveSectionDraft);
+        document.querySelectorAll('.save-section-btn').forEach(btn => {
+            btn.addEventListener('click', saveSectionDraft);
+        });
+
+        // Add real-time input listeners to all form fields
+        document.querySelectorAll('input, select, textarea').forEach(input => {
+            input.addEventListener('change', evaluateClientSectionStatuses);
+            input.addEventListener('input', evaluateClientSectionStatuses);
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const fpInput = document.getElementById('applicant_device_fp_input');
+            if (fpInput) fpInput.value = getDeviceFingerprint();
+
+            showStep(currentStep);
+            updateLocationDetail();
+            handleExclusiveCheckboxes('lang-checkbox');
+            handleExclusiveCheckboxes('ml-checkbox');
+
+            ['essay_one', 'essay_two'].forEach((id, idx) => {
+                const charId = idx === 0 ? 'essay-one-chars' : 'essay-two-chars';
+                const wordId = idx === 0 ? 'essay-one-words' : 'essay-two-words';
+                const badgeId = idx === 0 ? 'essay-one-words-badge' : 'essay-two-words-badge';
+                
+                const el = document.getElementById(id);
+                if (el) {
+                    updateCounters(id, charId, wordId, badgeId);
+                    el.addEventListener('input', () => updateCounters(id, charId, wordId, badgeId));
+                }
+            });
+
+            evaluateClientSectionStatuses();
+        });
+    </script>
 </Layout>

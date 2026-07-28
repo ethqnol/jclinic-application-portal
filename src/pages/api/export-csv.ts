@@ -1,109 +1,124 @@
 import type { APIRoute } from "astro";
-import { getSession, isAdmin } from "../../lib/auth";
+import { requireAdminGuard } from "../../lib/auth-guards";
+import { errorResponse } from "../../lib/api-response";
+import { AdminService } from "../../lib/services/adminService";
 
-export const GET: APIRoute = async ({ locals, cookies }) => {
-  const session = await getSession({ cookies } as any);
-
-  if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+function sanitizeCSVCell(val: any): string {
+  if (val === null || val === undefined) return '""';
+  let str = String(val);
+  // Neutralize formula injection
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = "'" + str;
   }
+  // Escape double quotes
+  return `"${str.replace(/"/g, '""')}"`;
+}
 
-  const db = locals.runtime?.env.DB;
-  if (!db) {
-    return new Response("Database not available", { status: 500 });
-  }
-
-  // Check if user is admin
-  const userIsAdmin = await isAdmin(session.user.email, db);
-  if (!userIsAdmin) {
-    return new Response("Unauthorized", { status: 403 });
+export const GET: APIRoute = async (context) => {
+  const guard = await requireAdminGuard(context);
+  if (!guard) {
+    return errorResponse("Unauthorized", 403);
   }
 
   try {
-    // Get all submitted applications with user data (exclude drafts)
-    const applications = await db
-      .prepare(
-        `
-      SELECT
-        a.id,
-        u.name,
-        u.email,
-        u.first_name,
-        u.last_name,
-        u.preferred_email,
-        a.essay_one,
-        a.essay_two,
-        a.experience_data,
-        a.needs_financial_aid,
-        a.submitted_at,
-        a.student_location
-      FROM applications a
-      JOIN users u ON a.user_id = u.id
-      WHERE a.is_draft = 0
-      ORDER BY a.submitted_at DESC
-    `,
-      )
-      .all();
+    const applications = await AdminService.getAllApplications(guard.db);
 
-    if (!applications.results || applications.results.length === 0) {
+    if (!applications || applications.length === 0) {
       return new Response("No applications found", { status: 404 });
     }
 
-    // Create CSV content
     const headers = [
       "Application ID",
       "First Name",
       "Last Name",
       "Google Email",
       "Preferred Email",
+      "Parent Name",
+      "Parent Email",
+      "Parent Phone",
       "Submitted Date",
-      "Programming Experience",
-      "Languages",
-      "Research Experience",
+      "Rating (1-5)",
+      "Student Location",
       "Grade Level",
+      "Programming Experience",
+      "Languages Used",
+      "ML Technologies Used",
+      "Research Experience",
       "Financial Aid Needed",
+      "Recommender Name",
+      "Recommender Email",
+      "Recommender Title",
+      "Rec Letter Status",
+      "Rec Letter Suspicious Flag",
+      "Rec Letter Text",
       "Clubs & Activities",
       "Final Thoughts",
       "Essay 1 (Interests & Background)",
       "Essay 2 (Future Goals)",
-      "Student Location",
     ];
 
     let csvContent = headers.join(",") + "\n";
 
-    applications.results.forEach((app: any) => {
-      const experienceData = JSON.parse(app.experience_data);
+    applications.forEach((app: any) => {
+      let experienceData: any = {};
+      try {
+        experienceData = JSON.parse(app.experience_data || "{}");
+      } catch (e) {
+        experienceData = {};
+      }
+
+      const locDetail = experienceData.location_detail;
+      let displayLoc = 'Massachusetts';
+      if (app.student_location === 'out_of_state') {
+        displayLoc = locDetail ? `Out of State (${locDetail})` : 'Out of State (US)';
+      } else if (app.student_location === 'international') {
+        displayLoc = locDetail ? `International (${locDetail})` : 'International';
+      }
+
+      const recStatus = app.rec_is_submitted ? "Received ✓" : "Pending";
+      const recFlag = app.is_suspicious_submission === 1 ? "FLAGGED: Device/Session Match" : (app.is_personal_email === 1 ? "NOTICE: Personal Email" : "Normal");
+
       const row = [
         app.id,
-        `"${app.first_name?.replace(/"/g, '""') || ""}"`,
-        `"${app.last_name?.replace(/"/g, '""') || ""}"`,
-        app.email,
-        app.preferred_email,
-        new Date(app.submitted_at).toLocaleDateString(),
-        experienceData.programming_experience,
-        `"${experienceData.languages?.join(", ") || "None"}"`,
-        experienceData.research_experience,
-        experienceData.grade_level || experienceData.academic_year, // Handle both field names for backward compatibility
-        app.needs_financial_aid ? "Yes" : "No",
-        `"${experienceData.clubs_activities?.replace(/"/g, '""') || ""}"`,
-        `"${experienceData.final_thoughts?.replace(/"/g, '""') || ""}"`,
-        `"${app.essay_one?.replace(/"/g, '""') || ""}"`,
-        `"${app.essay_two?.replace(/"/g, '""') || ""}"`,
-        app.student_location || "Unknown",
+        sanitizeCSVCell(app.first_name),
+        sanitizeCSVCell(app.last_name),
+        sanitizeCSVCell(app.user_email),
+        sanitizeCSVCell(app.preferred_email),
+        sanitizeCSVCell(experienceData.parent_name),
+        sanitizeCSVCell(experienceData.parent_email),
+        sanitizeCSVCell(experienceData.parent_phone),
+        sanitizeCSVCell(new Date(app.submitted_at).toLocaleDateString()),
+        sanitizeCSVCell(app.reviewer_grade ? `${app.reviewer_grade}/5` : "Unrated"),
+        sanitizeCSVCell(displayLoc),
+        sanitizeCSVCell(experienceData.grade_level || experienceData.academic_year),
+        sanitizeCSVCell(experienceData.programming_experience),
+        sanitizeCSVCell(experienceData.languages?.join(", ") || "None"),
+        sanitizeCSVCell(experienceData.ml_technologies?.join(", ") || "None"),
+        sanitizeCSVCell(experienceData.research_experience),
+        sanitizeCSVCell(app.needs_financial_aid ? "Yes" : "No"),
+        sanitizeCSVCell(app.recommender_name || experienceData.recommender_name),
+        sanitizeCSVCell(app.recommender_email || experienceData.recommender_email),
+        sanitizeCSVCell(app.recommender_title || experienceData.recommender_title),
+        sanitizeCSVCell(recStatus),
+        sanitizeCSVCell(recFlag),
+        sanitizeCSVCell(app.letter_text || ""),
+        sanitizeCSVCell(experienceData.clubs_activities),
+        sanitizeCSVCell(experienceData.final_thoughts),
+        sanitizeCSVCell(app.essay_one),
+        sanitizeCSVCell(app.essay_two),
       ];
       csvContent += row.join(",") + "\n";
     });
 
-    // Return CSV file
     return new Response(csvContent, {
       status: 200,
       headers: {
-        "Content-Type": "text/csv",
+        "Content-Type": "text/csv; charset=utf-8",
         "Content-Disposition": `attachment; filename="applications-${new Date().toISOString().split("T")[0]}.csv"`,
       },
     });
   } catch (error) {
     console.error("CSV export error:", error);
-    return new Response("Internal server error", { status: 500 });
+    return errorResponse("Internal server error", 500);
   }
 };

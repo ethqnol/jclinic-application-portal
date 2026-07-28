@@ -1,122 +1,346 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { getSession } from '../lib/auth';
-import { getApplicationStatus } from '../lib/application-status';
+import { getSession, getUserRole } from '../lib/auth';
+import { getApplicationStatus, calculateDraftSectionStatuses } from '../lib/application-status';
+import { RecommendationService } from '../lib/services/recommendationService';
 
 const session = await getSession(Astro);
-
 if (!session) {
   return Astro.redirect('/');
 }
 
-// Check if user has already submitted an application
-const db = Astro.locals.runtime?.env.DB;
-let existingApplication = null;
-
-// Check if applications are open
+const db = Astro.locals.runtime?.env?.DB;
+const userRole = db ? await getUserRole(session.user.email, db) : 'user';
 const applicationsOpen = db ? await getApplicationStatus(db) : true;
+
+let existingApplication: any = null;
+let recommendationRecord: any = null;
+let currentUser = session.user;
 
 if (db) {
   existingApplication = await db.prepare('SELECT * FROM applications WHERE user_id = ?')
     .bind(session.user.id)
     .first();
+
+  const dbUser: any = await db.prepare('SELECT * FROM users WHERE id = ?')
+    .bind(session.user.id)
+    .first();
+
+  if (dbUser) {
+    currentUser = {
+      id: String(dbUser.id),
+      email: String(dbUser.email || ''),
+      name: String(dbUser.name || ''),
+      first_name: String(dbUser.first_name || ''),
+      last_name: String(dbUser.last_name || ''),
+      preferred_email: String(dbUser.preferred_email || dbUser.email || ''),
+    };
+  }
+
+  if (existingApplication) {
+    recommendationRecord = await RecommendationService.getForApplication(db, existingApplication.id);
+  }
+}
+
+const isSubmitted = existingApplication && existingApplication.is_draft === 0;
+const isDraft = existingApplication && existingApplication.is_draft === 1;
+
+const sectionStatuses = calculateDraftSectionStatuses(currentUser, existingApplication);
+
+// Prepare mailto & Gmail Web URLs
+let mailtoUrl = '';
+let gmailWebUrl = '';
+let emailRawBody = '';
+
+if (recommendationRecord) {
+  const origin = Astro.url.origin;
+  const link = `${origin}/recommend/${recommendationRecord.token}`;
+  const subjectText = `Recommendation Letter Request for ${currentUser.first_name} ${currentUser.last_name} - MIT Jameel Clinic Summer Bootcamp`;
+  
+  emailRawBody = 
+    `Dear ${recommendationRecord.recommender_name},\n\n` +
+    `I am applying to the MIT Jameel Clinic Summer Bootcamp 2027 and would be honored if you would submit a recommendation letter on my behalf.\n\n` +
+    `You can submit your recommendation letter directly and confidentially using the secure link and 6-digit access PIN below:\n\n` +
+    `Recommendation Link: ${link}\n` +
+    `Your Access PIN: ${recommendationRecord.pin}\n\n` +
+    `Thank you very much for your time and support!\n\n` +
+    `Sincerely,\n` +
+    `${currentUser.first_name} ${currentUser.last_name}`;
+
+  const subjectEnc = encodeURIComponent(subjectText);
+  const bodyEnc = encodeURIComponent(emailRawBody);
+  const toEnc = encodeURIComponent(recommendationRecord.recommender_email);
+
+  mailtoUrl = `mailto:${toEnc}?subject=${subjectEnc}&body=${bodyEnc}`;
+  gmailWebUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${toEnc}&su=${subjectEnc}&body=${bodyEnc}`;
 }
 ---
 
-<Layout title="Dashboard - Application Portal" session={session}>
-	<main class="main-content">
-		<div class="dashboard-section">
-			<div class="container">
-				{existingApplication && !existingApplication.is_draft ? (
-				<div class="max-w-2xl mx-auto">
-					<div class="alert alert-success custom-dot" style="text-align: center;">
-						<div style="display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 1rem;">
-							<div style="width: 20px; height: 20px; border-radius: 50%; background-color: var(--success-color); flex-shrink: 0; display: flex; align-items: center; justify-content: center;"></div>
-							<h2 style="color: #16a34a; margin: 0; line-height: 1.2;">Application Submitted!</h2>
-						</div>
-						<p style="color: #16a34a; margin-bottom: 1rem;">
-							Thank you for submitting your application. We have received your submission on {new Date(existingApplication.submitted_at).toLocaleDateString()}.
-						</p>
-						<p style="color: #16a34a; margin: 0;">
-							We will review your application and get back to you soon.
-						</p>
-					</div>
+<Layout title="Dashboard - Application Portal" session={session} userRole={userRole}>
+	<div class="container" style="max-width: 860px;">
+		
+		<div style="margin-bottom: 2rem;">
+			<h2 style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin-bottom: 0.25rem;">
+				Applicant Dashboard
+			</h2>
+			<p style="color: var(--slate-600); font-size: 1rem;">
+				Track your application status, draft progress, and recommendation letter status.
+			</p>
+		</div>
+
+		<!-- Application Status Timeline -->
+		<div class="card-clean" style="padding: 1.75rem 1.5rem; margin-bottom: 1.5rem;">
+			<h4 style="font-size: 0.85rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1.25rem;">
+				Application Progress
+			</h4>
+
+			<div class="timeline-bar">
+				<div class="step-item completed">
+					<div class="step-bubble">✓</div>
+					<div class="step-text">Signed In</div>
 				</div>
-			) : existingApplication && existingApplication.is_draft ? (
-				<div class="max-w-2xl mx-auto">
-					<div class="card">
-						<h2>Draft Application Saved</h2>
-						<p style="margin-bottom: 1.5rem;">
-							You have a saved draft application. You can continue working on it or start fresh.
-						</p>
-						<p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 2rem;">
-							Last updated: {new Date(existingApplication.last_updated).toLocaleString()}
-						</p>
-						<div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-							<a href="/application" class="btn btn-primary">
-								Continue Application
-							</a>
-							<button id="delete-draft-btn" class="btn btn-secondary">
-								Start Fresh
-							</button>
-						</div>
-					</div>
+
+				<div class={`step-item ${isDraft ? 'active' : isSubmitted ? 'completed' : ''}`}>
+					<div class="step-bubble">{isSubmitted ? '✓' : '2'}</div>
+					<div class="step-text">Draft Form</div>
 				</div>
-			) : !applicationsOpen ? (
-				<div class="max-w-2xl mx-auto">
-					<div class="card" style="background: #fef3cd; border: 2px solid #f59e0b;">
-						<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
-							<span style="font-size: 2rem;">🔒</span>
-							<h2 style="color: #92400e; margin: 0;">Applications Currently Closed</h2>
-						</div>
-						<p style="color: #92400e; margin-bottom: 1rem;">
-							Thank you for your interest in the JClinic Bootcamp! New applications are not currently being accepted.
-						</p>
-						<p style="color: #92400e; margin: 0; font-size: 0.875rem;">
-							Applications will reopen soon. Please check back later.
-						</p>
-					</div>
+
+				<div class={`step-item ${isSubmitted ? 'active completed' : ''}`}>
+					<div class="step-bubble">{isSubmitted ? '✓' : '3'}</div>
+					<div class="step-text">Submitted</div>
 				</div>
-			) : (
-				<div class="max-w-2xl mx-auto">
-					<div class="card">
-						<h2>Welcome to the Application Portal</h2>
-						<p style="margin-bottom: 2rem;">
-							Ready to apply for our summer program? Click the button below to get started. Don't worry - you can save your progress as a draft at any time.
-						</p>
-						<a href="/application" class="btn btn-primary">
-							Start Application
-						</a>
-					</div>
+
+				<div class={`step-item ${isSubmitted ? 'active' : ''}`}>
+					<div class="step-bubble">4</div>
+					<div class="step-text">Under Review</div>
 				</div>
-				)}
 			</div>
 		</div>
 
-		<script>
-			document.addEventListener('DOMContentLoaded', function() {
-				const deleteBtn = document.getElementById('delete-draft-btn');
-				if (deleteBtn) {
-					deleteBtn.addEventListener('click', async function() {
-						if (confirm('Are you sure you want to delete your saved draft? This action cannot be undone.')) {
-							try {
-								const response = await fetch('/api/delete-draft', {
-									method: 'POST'
-								});
+		<!-- Recommendation Status Card -->
+		{recommendationRecord && (
+			<div class="card-clean" style="margin-bottom: 1.5rem; border-left: 4px solid var(--brand-blue); padding: 1.5rem 1.75rem;">
+				<div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+					<div>
+						<h4 style="font-size: 0.8rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">
+							Recommendation Letter Status
+						</h4>
+						<h3 style="font-size: 1.15rem; font-weight: 700; color: var(--slate-900); margin: 0;">
+							{recommendationRecord.recommender_name}
+							<span style="font-size: 0.85rem; font-weight: 400; color: var(--slate-600);"> ({recommendationRecord.recommender_title || 'Recommender'})</span>
+						</h3>
+						<div style="font-size: 0.825rem; color: var(--slate-500); margin-top: 0.15rem;">
+							Email: {recommendationRecord.recommender_email}
+						</div>
+					</div>
 
-								if (response.ok) {
-									location.reload();
-								} else {
-									const result = await response.json();
-									alert('Error deleting draft: ' + (result.error || 'Unknown error'));
-								}
-							} catch (error) {
-								alert('Error deleting draft. Please try again.');
+					<div>
+						{recommendationRecord.is_submitted ? (
+							<span class="badge-pill pill-success" style="font-size: 0.85rem; padding: 0.35rem 0.75rem;">
+								✓ Recommendation Received
+							</span>
+						) : (
+							<span class="badge-pill pill-warning" style="font-size: 0.85rem; padding: 0.35rem 0.75rem;">
+								Pending Recommender Submission
+							</span>
+						)}
+					</div>
+				</div>
+
+				{!recommendationRecord.is_submitted && (
+					<div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.25rem; margin-top: 1rem;">
+						<div class="notice-box notice-warning" style="margin-bottom: 1rem; background: #FFFBEB; border-color: #FDE68A;">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+								<circle cx="12" cy="12" r="10"></circle>
+								<line x1="12" y1="8" x2="12" y2="12"></line>
+								<line x1="12" y1="16" x2="12.01" y2="16"></line>
+							</svg>
+							<div>
+								<div class="notice-title" style="color: #B45309;">Applicant Responsibility Notice</div>
+								<p class="notice-body" style="color: #92400E;">
+									<strong>You are personally responsible for sending the recommendation invitation link to your recommender.</strong> Use one of the options below to send the link & PIN to {recommendationRecord.recommender_name}.
+								</p>
+							</div>
+						</div>
+
+						<div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+							<!-- Option 1: Gmail Web -->
+							<a href={gmailWebUrl} target="_blank" rel="noopener" class="btn btn-primary btn-sm" style="display: inline-flex; align-items: center; gap: 0.4rem;">
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+									<polyline points="22,6 12,13 2,6"></polyline>
+								</svg>
+								Open in Gmail (Web)
+							</a>
+
+							<!-- Option 2: Default Mail App -->
+							<a href={mailtoUrl} class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 0.4rem;">
+								Open Default Mail App
+							</a>
+
+							<!-- Option 3: Copy to Clipboard -->
+							<button type="button" id="copy-email-template-btn" class="btn btn-secondary btn-sm" data-text={emailRawBody}>
+								Copy Email Text to Clipboard
+							</button>
+						</div>
+						<div id="copy-status-text" style="font-size: 0.75rem; color: var(--success-green); margin-top: 0.5rem; display: none;">
+							✓ Email text & link copied to clipboard!
+						</div>
+					</div>
+				)}
+			</div>
+		)}
+
+		<!-- Status Cards -->
+		{isSubmitted ? (
+			<div class="card-clean" style="border-left: 4px solid var(--success-green); padding: 2rem;">
+				<div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
+					<div style="width: 32px; height: 32px; background: var(--success-bg); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--success-green); border: 1px solid var(--success-border);">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+							<polyline points="20 6 9 17 4 12"></polyline>
+						</svg>
+					</div>
+					<div>
+						<h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin: 0;">
+							Application Submitted
+						</h3>
+						<p style="color: var(--slate-500); font-size: 0.85rem; margin: 0;">
+							Submitted on {new Date(existingApplication.submitted_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+						</p>
+					</div>
+				</div>
+
+				<p style="color: var(--slate-600); margin: 0; font-size: 0.95rem; line-height: 1.6;">
+					Thank you for submitting your application to the MIT Jameel Clinic Summer Bootcamp. Our admissions committee is currently reviewing applications and will contact you regarding next steps.
+				</p>
+			</div>
+		) : isDraft ? (
+			<div class="card-clean" style="border-left: 4px solid var(--warning-amber); padding: 2rem;">
+				<div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+					<div>
+						<span class="badge-pill pill-warning" style="margin-bottom: 0.5rem;">
+							Draft Saved
+						</span>
+						<h3 style="font-size: 1.35rem; font-weight: 700; color: var(--slate-900); margin: 0.25rem 0;">
+							Draft Application Ready
+						</h3>
+						<p style="color: var(--slate-500); font-size: 0.85rem; margin: 0;">
+							Last saved: {new Date(existingApplication.last_updated).toLocaleString()}
+						</p>
+					</div>
+				</div>
+
+				<!-- Section Draft Completion Breakdown with Perfectly Centered Mini Circles -->
+				<div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.25rem; margin: 1.25rem 0;">
+					<h4 style="font-size: 0.775rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.85rem;">
+						Draft Section Progress
+					</h4>
+
+					<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.85rem;">
+						{[
+							{ title: '1. Personal & Parent Info', status: sectionStatuses.sec1 },
+							{ title: '2. Background & Skills', status: sectionStatuses.sec2 },
+							{ title: '3. Essay Responses', status: sectionStatuses.sec3 }
+						].map(item => (
+							<div style="display: flex; align-items: center; gap: 0.75rem; background: #FFFFFF; padding: 0.65rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200);">
+								{item.status === 'complete' ? (
+									<div style="width: 24px; height: 24px; border-radius: 50%; background: #16A34A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+											<polyline points="20 6 9 17 4 12"></polyline>
+										</svg>
+									</div>
+								) : item.status === 'incomplete' ? (
+									<div style="width: 24px; height: 24px; border-radius: 50%; background: #D97706; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<div style="width: 8px; height: 8px; border-radius: 50%; background: #FFFFFF;"></div>
+									</div>
+								) : (
+									<div style="width: 24px; height: 24px; border-radius: 50%; background: #334155; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+										<div style="width: 6px; height: 6px; border-radius: 50%; background: #94A3B8;"></div>
+									</div>
+								)}
+								<div>
+									<div style="font-size: 0.825rem; font-weight: 700; color: var(--slate-800);">{item.title}</div>
+									<div style="font-size: 0.75rem; color: var(--slate-500);">
+										{item.status === 'complete' ? 'Complete' : item.status === 'incomplete' ? 'In Progress' : 'Not Started'}
+									</div>
+								</div>
+							</div>
+						))}
+					</div>
+				</div>
+
+				<div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1rem;">
+					<a href="/application" class="btn btn-primary">
+						Continue Application
+					</a>
+					<button id="delete-draft-btn" class="btn btn-secondary">
+						Delete Draft
+					</button>
+				</div>
+			</div>
+		) : !applicationsOpen ? (
+			<div class="notice-box notice-warning">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+					<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+					<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+				</svg>
+				<div>
+					<div class="notice-title">Applications Currently Closed</div>
+					<p class="notice-body">
+						New applications are not currently being accepted for the bootcamp.
+					</p>
+				</div>
+			</div>
+		) : (
+			<div class="card-clean" style="padding: 2.5rem 2rem;">
+				<h3 style="font-size: 1.35rem; font-weight: 700; color: var(--slate-900); margin-bottom: 0.75rem;">
+					Start Your Application
+				</h3>
+				<p style="color: var(--slate-600); max-width: 540px; margin-bottom: 1.75rem; font-size: 0.95rem;">
+					The application form requests background details, parent contact information, recommendation details, and two essay responses. You can save your draft section by section at any point.
+				</p>
+				<a href="/application" class="btn btn-primary">
+					Start Application
+				</a>
+			</div>
+		)}
+
+	</div>
+
+	<script is:inline>
+		document.addEventListener('DOMContentLoaded', function() {
+			const deleteBtn = document.getElementById('delete-draft-btn');
+			if (deleteBtn) {
+				deleteBtn.addEventListener('click', async function() {
+					if (confirm('Are you sure you want to delete your saved draft? This action cannot be undone.')) {
+						try {
+							const response = await fetch('/api/delete-draft', { method: 'POST' });
+							if (response.ok) {
+								location.reload();
+							} else {
+								const result = await response.json();
+								alert('Error deleting draft: ' + (result.error || 'Unknown error'));
 							}
+						} catch (error) {
+							alert('Error deleting draft. Please try again.');
+						}
+					}
+				});
+			}
+
+			const copyBtn = document.getElementById('copy-email-template-btn');
+			const copyStatus = document.getElementById('copy-status-text');
+			if (copyBtn) {
+				copyBtn.addEventListener('click', function() {
+					const text = this.getAttribute('data-text');
+					navigator.clipboard.writeText(text).then(() => {
+						if (copyStatus) {
+							copyStatus.style.display = 'block';
+							setTimeout(() => { copyStatus.style.display = 'none'; }, 3500);
 						}
 					});
-				}
-			});
-		</script>
-	</main>
+				});
+			}
+		});
+	</script>
 </Layout>

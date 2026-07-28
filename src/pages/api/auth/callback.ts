@@ -5,30 +5,23 @@ export const GET: APIRoute = async ({ url, redirect, locals, cookies }) => {
   const state = url.searchParams.get('state');
   
   if (!code) {
-    console.error('No code provided in callback');
     return redirect('/?error=no_code');
   }
 
   // Validate state parameter to prevent CSRF attacks
   const storedState = cookies.get('oauth_state')?.value;
   if (!state || !storedState || state !== storedState) {
-    console.error('Invalid or missing state parameter');
     cookies.delete('oauth_state', { path: '/' });
     return redirect('/?error=invalid_state');
   }
 
-  // Clear the state cookie after successful validation
   cookies.delete('oauth_state', { path: '/' });
 
   try {
-    console.log('Starting OAuth flow...');
-    
-    // Get environment variables - they should be available in locals.runtime.env for Cloudflare
     const clientId = locals.runtime?.env?.GOOGLE_CLIENT_ID || import.meta.env.GOOGLE_CLIENT_ID;
     const clientSecret = locals.runtime?.env?.GOOGLE_CLIENT_SECRET || import.meta.env.GOOGLE_CLIENT_SECRET;
     
     if (!clientId || !clientSecret) {
-      console.error('Missing Google OAuth credentials');
       return redirect('/?error=missing_credentials');
     }
 
@@ -47,71 +40,62 @@ export const GET: APIRoute = async ({ url, redirect, locals, cookies }) => {
       }),
     });
 
-    const tokens = await tokenResponse.json();
-
-    if (!tokens.access_token) {
-      console.error('No access token received');
+    const tokens: any = await tokenResponse.json();
+    if (!tokens || !tokens.access_token) {
       return redirect('/?error=token_error');
     }
 
-    // Get user info from Google
+    // Fetch user profile from Google
     const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: {
-        Authorization: `Bearer ${tokens.access_token}`,
-      },
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
 
-    const userInfo = await userResponse.json();
-
-    // Store or update user in database
+    const userInfo: any = await userResponse.json();
     const db = locals.runtime?.env?.DB;
-    if (!db) {
-      console.error('Database not available');
+    if (!db || !userInfo || !userInfo.email) {
       return redirect('/?error=db_error');
     }
 
-    // Split the Google name into first and last name as best we can
-    const nameParts = userInfo.name.split(' ');
+    const nameParts = (userInfo.name || '').split(' ');
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
 
-    // First try to insert the user (if new)
-    try {
-      await db.prepare(`
-        INSERT INTO users (email, name, first_name, last_name, preferred_email)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(userInfo.email, userInfo.name, firstName, lastName, userInfo.email).run();
-    } catch (error) {
-      // If user already exists, update their info
-      await db.prepare(`
-        UPDATE users SET name = ?, first_name = ?, last_name = ?, preferred_email = ?
-        WHERE email = ?
-      `).bind(userInfo.name, firstName, lastName, userInfo.email, userInfo.email).run();
+    // Atomic SQLite upsert (ON CONFLICT)
+    await db.prepare(`
+      INSERT INTO users (email, name, first_name, last_name, preferred_email)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(email) DO UPDATE SET
+        name = excluded.name,
+        first_name = excluded.first_name,
+        last_name = excluded.last_name,
+        preferred_email = excluded.preferred_email
+    `).bind(userInfo.email, userInfo.name || '', firstName, lastName, userInfo.email).run();
+
+    const user: any = await db.prepare('SELECT * FROM users WHERE email = ?').bind(userInfo.email).first();
+
+    if (!user) {
+      return redirect('/?error=db_error');
     }
 
-    const user = await db.prepare('SELECT * FROM users WHERE email = ?').bind(userInfo.email).first();
-
-    // Set secure session cookie
     const session = {
       user: {
-        id: user.id.toString(),
-        email: user.email,
-        name: user.name,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        preferred_email: user.preferred_email,
+        id: String(user.id),
+        email: String(user.email || ''),
+        name: String(user.name || ''),
+        first_name: String(user.first_name || ''),
+        last_name: String(user.last_name || ''),
+        preferred_email: String(user.preferred_email || user.email || ''),
       }
     };
 
     cookies.set('session', JSON.stringify(session), {
       httpOnly: true,
-      secure: true, // Secure in production
+      secure: true,
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      maxAge: 60 * 60 * 24 * 7,
       path: '/'
     });
 
-    console.log('Session set, redirecting to dashboard');
     return redirect('/dashboard');
   } catch (error) {
     console.error('Auth error:', error);

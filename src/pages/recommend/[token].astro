@@ -1,0 +1,221 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { RecommendationService } from '../../lib/services/recommendationService';
+
+const { token } = Astro.params;
+const db = Astro.locals.runtime?.env?.DB;
+
+if (!token || !db) {
+  return Astro.redirect('/?error=invalid_recommendation_link');
+}
+
+const rec = await RecommendationService.getByToken(db, token);
+---
+
+<Layout title="Submit Recommendation - MIT Jameel Clinic Bootcamp">
+  <div class="container" style="max-width: 760px; margin-top: 2rem;">
+    
+    {!rec ? (
+      <div class="notice-box notice-warning">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <div>
+          <div class="notice-title">Invalid or Expired Link</div>
+          <p class="notice-body">
+            This recommendation access link is invalid or may have expired. Please verify the URL with the applicant.
+          </p>
+        </div>
+      </div>
+    ) : rec.is_submitted ? (
+      <div class="card-clean" style="border-left: 4px solid var(--success-green); padding: 2.5rem; text-align: center;">
+        <div style="width: 48px; height: 48px; background: var(--success-bg); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--success-green); margin: 0 auto 1.25rem auto; border: 1px solid var(--success-border);">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+
+        <h3 style="font-size: 1.5rem; font-weight: 800; color: var(--slate-900); margin-bottom: 0.5rem;">
+          Recommendation Letter Received
+        </h3>
+        <p style="color: var(--slate-600); font-size: 0.95rem; max-width: 500px; margin: 0 auto 1.25rem auto; line-height: 1.6;">
+          Thank you, <strong>{rec.recommender_name}</strong>! Your recommendation letter for <strong>{rec.first_name} {rec.last_name}</strong> was successfully submitted on {new Date(rec.submitted_at).toLocaleDateString()}.
+        </p>
+        <span class="badge-pill pill-success" style="font-size: 0.85rem;">
+          Submission Complete & Locked
+        </span>
+      </div>
+    ) : (
+      <div class="card-clean" style="padding: 2.25rem;">
+        
+        <div style="border-bottom: 1px solid var(--slate-200); padding-bottom: 1.25rem; margin-bottom: 1.5rem;">
+          <span class="badge-pill pill-neutral" style="margin-bottom: 0.5rem;">Confidential Evaluation Portal</span>
+          <h2 style="font-size: 1.75rem; font-weight: 800; color: var(--slate-900); margin-bottom: 0.35rem;">
+            Submit Recommendation Letter
+          </h2>
+          <p style="color: var(--slate-600); font-size: 0.95rem; margin: 0;">
+            Recommending Student: <strong style="color: var(--brand-blue);">{rec.first_name} {rec.last_name}</strong> (MIT Jameel Clinic Summer Bootcamp 2027)
+          </p>
+        </div>
+
+        <form id="recommendation-submit-form">
+          <input type="hidden" name="token" value={token} />
+          <input type="hidden" name="device_fp" id="device_fp_input" value="" />
+
+          <!-- Recommender Info Summary -->
+          <div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1rem 1.25rem; margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; font-size: 0.875rem;">
+            <div><strong>Recommender Name:</strong> {rec.recommender_name}</div>
+            <div><strong>Recommender Email:</strong> {rec.recommender_email}</div>
+          </div>
+
+          <!-- Step 1: 6-Digit PIN Validation -->
+          <div class="form-group">
+            <label class="form-label" for="pin">
+              6-Digit Access PIN *
+              <span style="font-weight: 400; color: var(--slate-500); font-size: 0.825rem; display: block; margin-top: 0.2rem;">
+                Enter the 6-digit security PIN provided to you by {rec.first_name}.
+              </span>
+            </label>
+            <input
+              type="text"
+              id="pin"
+              name="pin"
+              class="input-field"
+              required
+              maxlength="6"
+              placeholder="e.g. 482910"
+              style="max-width: 220px; font-family: monospace; font-size: 1.1rem; letter-spacing: 0.15em;"
+            />
+          </div>
+
+          <!-- Step 2: Letter Text -->
+          <div class="form-group">
+            <label class="form-label" for="letter_text">
+              Recommendation Letter Text *
+              <span style="font-weight: 400; color: var(--slate-500); font-size: 0.825rem; display: block; margin-top: 0.2rem;">
+                Please share your assessment of {rec.first_name}'s academic potential, technical interest, work ethic, or personal character. (Up to 5,000 characters)
+              </span>
+            </label>
+            <textarea
+              id="letter_text"
+              name="letter_text"
+              class="textarea-field"
+              rows="12"
+              required
+              maxlength="5000"
+              placeholder="Type or paste your recommendation letter here..."
+            ></textarea>
+            <div style="font-size: 0.75rem; color: var(--slate-500); text-align: right; margin-top: 0.4rem;">
+              Characters: <span id="rec-char-count">0</span> / 5000
+            </div>
+          </div>
+
+          <div class="notice-box notice-info" style="margin-bottom: 1.5rem;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+            <div style="font-size: 0.85rem; color: var(--slate-700);">
+              This recommendation is confidential under FERPA guidelines and will be used solely by the admissions committee.
+            </div>
+          </div>
+
+          <button type="submit" id="submit-rec-btn" class="btn btn-primary" style="width: 100%; padding: 0.85rem;">
+            Submit Confidential Recommendation
+          </button>
+        </form>
+
+        <div id="submit-status-msg" style="margin-top: 1rem; text-align: center; font-size: 0.9rem; font-weight: 600;"></div>
+      </div>
+    )}
+
+  </div>
+
+  <script is:inline>
+    function getDeviceFingerprint() {
+      const nav = window.navigator;
+      const screen = window.screen;
+      const raw = [
+        nav.userAgent,
+        nav.language,
+        screen.colorDepth,
+        screen.width + 'x' + screen.height,
+        new Date().getTimezoneOffset(),
+        nav.hardwareConcurrency || 'unk'
+      ].join('||');
+      
+      let hash = 0;
+      for (let i = 0; i < raw.length; i++) {
+        const char = raw.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash |= 0;
+      }
+      return 'fp_' + Math.abs(hash).toString(36);
+    }
+
+    const textarea = document.getElementById('letter_text');
+    const charCounter = document.getElementById('rec-char-count');
+    textarea?.addEventListener('input', () => {
+      if (charCounter) charCounter.textContent = textarea.value.length;
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const fpInput = document.getElementById('device_fp_input');
+      if (fpInput) fpInput.value = getDeviceFingerprint();
+    });
+
+    document.getElementById('recommendation-submit-form')?.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const statusMsg = document.getElementById('submit-status-msg');
+      const submitBtn = document.getElementById('submit-rec-btn');
+
+      const pin = document.getElementById('pin').value.trim();
+      const letterText = document.getElementById('letter_text').value.trim();
+
+      if (pin.length !== 6) {
+        statusMsg.style.color = '#DC2626';
+        statusMsg.textContent = 'Please enter a valid 6-digit PIN';
+        return;
+      }
+
+      if (letterText.length < 20) {
+        statusMsg.style.color = '#DC2626';
+        statusMsg.textContent = 'Please enter a recommendation letter (at least 20 characters)';
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting Letter...';
+      statusMsg.style.color = 'var(--slate-600)';
+      statusMsg.textContent = 'Submitting recommendation...';
+
+      try {
+        const formData = new FormData(this);
+        const res = await fetch('/api/recommend/submit', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          statusMsg.style.color = 'var(--success-green)';
+          statusMsg.textContent = '✓ Letter Submitted Successfully!';
+          setTimeout(() => location.reload(), 1200);
+        } else {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Submit Confidential Recommendation';
+          statusMsg.style.color = '#DC2626';
+          statusMsg.textContent = data.error || 'Failed to submit recommendation';
+        }
+      } catch (err) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Confidential Recommendation';
+        statusMsg.style.color = '#DC2626';
+        statusMsg.textContent = 'Network error while submitting. Please try again.';
+      }
+    });
+  </script>
+</Layout>

@@ -1,651 +1,738 @@
 ---
-import { getSession, getUserRole } from '../lib/auth';
+import Layout from '../layouts/Layout.astro';
+import { getSession, isAdmin } from '../lib/auth';
+import { AdminService } from '../lib/services/adminService';
 import { getApplicationStatus } from '../lib/application-status';
 
 const session = await getSession(Astro);
-
 if (!session) {
   return Astro.redirect('/');
 }
 
-const db = Astro.locals.runtime?.env.DB;
+const db = Astro.locals.runtime?.env?.DB;
 if (!db) {
-  return new Response('Database not available', { status: 500 });
+  return Astro.redirect('/?error=db_error');
 }
 
-// Check user role - redirect reviewers to their review queue
-const userRole = await getUserRole(session.user.email, db);
-if (userRole === 'reviewer') {
-  return Astro.redirect('/review');
-}
-if (userRole !== 'admin') {
-  return new Response('Unauthorized', { status: 403 });
+const userIsAdmin = await isAdmin(session.user.email, db);
+if (!userIsAdmin) {
+  return Astro.redirect('/dashboard');
 }
 
-// Get application status
+const applications = await AdminService.getAllApplications(db);
+const admins = await AdminService.getAllAdmins(db);
 const applicationsOpen = await getApplicationStatus(db);
 
-// Get submitted applications with user data (ONLY submitted, no drafts)
-const applications = await db.prepare(`
-  SELECT 
-    a.id,
-    a.essay_one,
-    a.essay_two,
-    a.experience_data,
-    a.needs_financial_aid,
-    a.submitted_at,
-    a.is_draft,
-    a.assigned_to,
-    a.review_status,
-    a.assigned_at,
-    a.reviewed_at,
-    a.reviewer_grade,
-    u.name,
-    u.email,
-    u.first_name,
-    u.last_name,
-    u.preferred_email
-  FROM applications a
-  JOIN users u ON a.user_id = u.id
-  WHERE a.is_draft = 0
-  ORDER BY a.submitted_at DESC
-`).all();
-
-// Get all admin and reviewer users for assignment dropdown
-const admins = await db.prepare('SELECT email FROM admins ORDER BY email').all();
-const reviewers = await db.prepare('SELECT email FROM reviewers ORDER BY email').all();
-const allAssignees = [...(admins.results || []), ...(reviewers.results || [])].sort((a, b) => a.email.localeCompare(b.email));
-
-import Layout from '../layouts/Layout.astro';
+const gradeColors: Record<number, string> = {
+	1: '#DC2626',
+	2: '#EA580C',
+	3: '#475569',
+	4: '#0D9488',
+	5: '#16A34A'
+};
 ---
 
-<Layout title="Admin Dashboard - Application Portal" session={session} userRole={userRole}>
-	<main class="main-content">
-		<div class="admin-section">
-			<div class="container">
-			<!-- Application Status Control -->
-			<div style="background: white; border-radius: 5px; padding: 1rem; margin-bottom: 1.2rem; border: 1px solid #e5e7eb;">
-				<div style="display: flex; justify-content: space-between; align-items: center;">
-					<div>
-						<h3 style="margin: 0; font-size: 1.125rem; font-weight: 600; color: #111827;">Application Status</h3>
-						<p style="margin: 0.5rem 0 0 0; color: #6b7280; font-size: 0.875rem;">
-							Control whether new applications can be submitted
-						</p>
+<Layout title="Admin Console - Application Portal" session={session} userRole="admin">
+	<div class="container" style="max-width: 1140px;">
+		
+		<!-- Admin Header Bar -->
+		<div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+			<div>
+				<h2 style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin-bottom: 0.25rem;">
+					Admin Console
+				</h2>
+				<p style="color: var(--slate-600); margin: 0; font-size: 0.95rem;">
+					Manage applicant evaluations, system settings, and administrator access.
+				</p>
+			</div>
+
+			<div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+				<a href="/api/export-csv" class="btn btn-secondary btn-sm">
+					Export CSV
+				</a>
+
+				<button id="toggle-apps-btn" class="btn btn-secondary btn-sm">
+					{applicationsOpen ? 'Close Applications' : 'Open Applications'}
+				</button>
+			</div>
+		</div>
+
+		<!-- Nav Tabs: Review Console vs Config -->
+		<div style="display: flex; gap: 0.5rem; border-bottom: 1px solid var(--slate-200); margin-bottom: 1.75rem;">
+			<button id="tab-review-btn" class="btn btn-secondary btn-sm tab-btn active" style="border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: -1px;">
+				Review Console
+			</button>
+			<button id="tab-config-btn" class="btn btn-secondary btn-sm tab-btn" style="border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: -1px;">
+				Config
+			</button>
+		</div>
+
+		<!-- SECTION 1: REVIEW CONSOLE TAB -->
+		<div id="section-review">
+			<!-- Summary Stats -->
+			<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.75rem;">
+				<div class="card-clean" style="padding: 1.25rem; margin: 0;">
+					<span style="font-size: 0.75rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Total Submitted</span>
+					<div style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin-top: 0.2rem;">
+						{applications.length}
 					</div>
-					<div style="display: flex; align-items: center; gap: 1rem;">
-						<span style={`font-weight: 600; ${applicationsOpen ? 'color: #059669;' : 'color: #dc2626;'}`}>
-							{applicationsOpen ? '🟢 Open' : '🔴 Closed'}
-						</span>
-						<button 
-							id="toggle-applications-btn" 
-							class="btn"
-							style={`${applicationsOpen 
-								? 'background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);' 
-								: 'background: linear-gradient(135deg, #059669 0%, #047857 100%);'
-							} color: white;`}
-						>
-							{applicationsOpen ? '🔴 Close Applications' : '🟢 Open Applications'}
-						</button>
+				</div>
+
+				<div class="card-clean" style="padding: 1.25rem; margin: 0;">
+					<span style="font-size: 0.75rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Reviewed & Rated</span>
+					<div style="font-size: 2rem; font-weight: 800; color: var(--success-green); margin-top: 0.2rem;">
+						{applications.filter((a: any) => a.reviewer_grade !== null).length}
+					</div>
+				</div>
+
+				<div class="card-clean" style="padding: 1.25rem; margin: 0;">
+					<span style="font-size: 0.75rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Awaiting Review</span>
+					<div style="font-size: 2rem; font-weight: 800; color: var(--warning-amber); margin-top: 0.2rem;">
+						{applications.filter((a: any) => a.reviewer_grade === null).length}
 					</div>
 				</div>
 			</div>
 
+			<!-- Applications Table -->
+			<div class="card-clean" style="padding: 0; overflow: hidden;">
+				<div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--slate-200); background: var(--slate-50); display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+					<h3 style="font-size: 1rem; font-weight: 700; color: var(--slate-800); margin: 0;">
+						Applications List
+					</h3>
+					<input
+						type="text"
+						id="search-input"
+						placeholder="Search by name or email..."
+						class="input-field"
+						style="max-width: 280px; padding: 0.4rem 0.75rem; font-size: 0.85rem;"
+					/>
+				</div>
 
-			<!-- Reviewer Management Section -->
-			<div style="background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);">
-				<h3 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: #374151;">Reviewer Management</h3>
-				
-				<div style="display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center;">
-					<div style="display: flex; align-items: center; gap: 0.75rem;">
-						<input 
-							id="newReviewerEmail" 
-							type="email" 
-							placeholder="Enter reviewer email..." 
-							style="height: 40px; padding: 0 0.75rem; border: 2px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; min-width: 250px; background: white;"
-						>
-						<button id="addReviewerBtn" style="height: 40px; padding: 0 1rem; background: #6b7280; color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: not-allowed; white-space: nowrap;" disabled>
-							➕ Add Reviewer
-						</button>
-					</div>
-					
-					<div style="font-size: 0.75rem; color: #6b7280; text-align: right;">
-						Total Reviewers: {(reviewers.results?.length || 0) + (admins.results?.length || 0)}
-					</div>
+				<div style="overflow-x: auto;">
+					<table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.875rem;">
+						<thead>
+							<tr style="background: var(--slate-100); border-bottom: 1px solid var(--slate-200); color: var(--slate-600); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.04em;">
+								<th style="padding: 0.75rem 1.25rem;">Applicant</th>
+								<th style="padding: 0.75rem 1rem;">Location</th>
+								<th style="padding: 0.75rem 1rem;">Rec Letter</th>
+								<th style="padding: 0.75rem 1rem;">Fin. Aid</th>
+								<th style="padding: 0.75rem 1rem;">Rating</th>
+								<th style="padding: 0.75rem 1.25rem; text-align: right;">Action</th>
+							</tr>
+						</thead>
+						<tbody id="applications-body">
+							{applications.map((app: any) => {
+								const experienceData = JSON.parse(app.experience_data || '{}');
+								const grade = app.reviewer_grade;
+								const gradeColor = grade ? gradeColors[grade] : '#64748B';
+								const locDetail = experienceData.location_detail;
+								
+								let displayLoc = 'Massachusetts';
+								if (app.student_location === 'out_of_state') {
+									displayLoc = locDetail ? `Out of State (${locDetail})` : 'Out of State (US)';
+								} else if (app.student_location === 'international') {
+									displayLoc = locDetail ? `International (${locDetail})` : 'International';
+								}
+
+								const isFlagged = app.is_suspicious_submission === 1;
+								const isPersonal = app.is_personal_email === 1;
+
+								return (
+									<tr class="app-row" data-search={`${app.user_name} ${app.user_email} ${app.first_name} ${app.last_name} ${displayLoc}`} style="border-bottom: 1px solid var(--slate-200);">
+										<td style="padding: 0.85rem 1.25rem;">
+											<div style="font-weight: 700; color: var(--slate-900);">{app.first_name || app.user_name} {app.last_name || ''}</div>
+											<div style="font-size: 0.8rem; color: var(--slate-500);">{app.preferred_email || app.user_email}</div>
+										</td>
+										<td style="padding: 0.85rem 1rem; color: var(--slate-700); font-weight: 500;">
+											{displayLoc}
+										</td>
+										<td style="padding: 0.85rem 1rem;">
+											{app.rec_is_submitted ? (
+												<div>
+													<span class="badge-pill pill-success">
+														Received ✓
+													</span>
+													{isFlagged && (
+														<div style="font-size: 0.725rem; color: #DC2626; font-weight: 700; margin-top: 0.2rem; display: flex; align-items: center; gap: 0.2rem;">
+															<span>⚠️ Flagged: Device Match</span>
+														</div>
+													)}
+													{isPersonal && !isFlagged && (
+														<div style="font-size: 0.725rem; color: #D97706; font-weight: 600; margin-top: 0.2rem;">
+															Notice: Personal Webmail
+														</div>
+													)}
+												</div>
+											) : (
+												<span class="badge-pill pill-neutral">Pending</span>
+											)}
+										</td>
+										<td style="padding: 0.85rem 1rem;">
+											{app.needs_financial_aid ? (
+												<span class="badge-pill pill-warning">Yes</span>
+											) : (
+												<span class="badge-pill pill-neutral">No</span>
+											)}
+										</td>
+										<td style="padding: 0.85rem 1rem;">
+											{grade ? (
+												<span style={`background: ${gradeColor}15; color: ${gradeColor}; border: 1px solid ${gradeColor}30; padding: 0.2rem 0.55rem; border-radius: var(--radius-full); font-size: 0.775rem; font-weight: 700;`}>
+													Rating {grade}/5
+												</span>
+											) : (
+												<span style="color: var(--slate-400); font-size: 0.8rem; font-style: italic;">Unrated</span>
+											)}
+										</td>
+										<td style="padding: 0.85rem 1.25rem; text-align: right;">
+											<button
+												class="btn btn-primary btn-sm review-btn"
+												data-app={JSON.stringify(app)}
+												data-loc={displayLoc}
+											>
+												Review & Rate
+											</button>
+										</td>
+									</tr>
+								);
+							})}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+
+		<!-- SECTION 2: CONFIG TAB -->
+		<div id="section-config" style="display: none;">
+			
+			<div class="card-clean" style="margin-bottom: 1.75rem;">
+				<h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 0.5rem;">
+					Add New Administrator
+				</h3>
+				<p style="color: var(--slate-600); font-size: 0.9rem; margin-bottom: 1.25rem;">
+					Grant full administrator access to another Google account email.
+				</p>
+
+				<form id="add-admin-form" style="display: flex; gap: 0.75rem; max-width: 500px; align-items: center;">
+					<input
+						type="email"
+						id="new-admin-email"
+						placeholder="user@example.com"
+						class="input-field"
+						required
+					/>
+					<button type="submit" class="btn btn-primary" style="white-space: nowrap;">
+						Add Admin
+					</button>
+				</form>
+				<div id="add-admin-status" style="margin-top: 0.75rem; font-size: 0.85rem;"></div>
+			</div>
+
+			<!-- Current Admins List -->
+			<div class="card-clean" style="padding: 0; overflow: hidden; margin-bottom: 2rem;">
+				<div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--slate-200); background: var(--slate-50);">
+					<h3 style="font-size: 1rem; font-weight: 700; color: var(--slate-800); margin: 0;">
+						Active Administrators ({admins.length})
+					</h3>
+				</div>
+
+				<div style="overflow-x: auto;">
+					<table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.875rem;">
+						<thead>
+							<tr style="background: var(--slate-100); border-bottom: 1px solid var(--slate-200); color: var(--slate-600); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.04em;">
+								<th style="padding: 0.75rem 1.25rem;">Admin Email</th>
+								<th style="padding: 0.75rem 1rem;">Added Date</th>
+								<th style="padding: 0.75rem 1.25rem; text-align: right;">Action</th>
+							</tr>
+						</thead>
+						<tbody>
+							{admins.map((adm: any) => {
+								const isSelf = adm.email.toLowerCase() === session.user.email.toLowerCase();
+								return (
+									<tr style="border-bottom: 1px solid var(--slate-200);">
+										<td style="padding: 0.85rem 1.25rem; font-weight: 600; color: var(--slate-900);">
+											{adm.email}
+											{isSelf && <span class="badge-pill pill-neutral" style="margin-left: 0.5rem; font-size: 0.7rem;">(You)</span>}
+										</td>
+										<td style="padding: 0.85rem 1rem; color: var(--slate-600); font-size: 0.825rem;">
+											{adm.created_at ? new Date(adm.created_at).toLocaleDateString() : 'Baseline'}
+										</td>
+										<td style="padding: 0.85rem 1.25rem; text-align: right;">
+											<button
+												class="btn btn-secondary btn-sm remove-admin-btn"
+												data-email={adm.email}
+												disabled={isSelf}
+												title={isSelf ? "You cannot demote yourself" : "Demote Admin"}
+												style={isSelf ? "opacity: 0.5; cursor: not-allowed;" : ""}
+											>
+												Demote / Remove
+											</button>
+										</td>
+									</tr>
+								);
+							})}
+						</tbody>
+					</table>
 				</div>
 			</div>
 
-			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-				<h2>Applications ({applications.results?.length || 0})</h2>
-				<div style="display: flex; gap: 1rem;">
-					<a href="/api/export-csv" class="btn btn-secondary">
-						Export to CSV
-					</a>
-					<button id="wipe-database-btn" class="btn" style="background: linear-gradient(135deg, var(--error-color) 0%, #b91c1c 100%); color: white;">
-						⚠️ Wipe Database
+			<!-- DANGER ZONE: DATABASE WIPE -->
+			<div class="card-clean" style="border: 2px solid #FCA5A5; background: #FEF2F2; padding: 1.75rem;">
+				<h3 style="font-size: 1.25rem; font-weight: 800; color: #991B1B; margin-bottom: 0.5rem;">
+					Danger Zone: Database Wipe
+				</h3>
+				<p style="color: #7F1D1D; font-size: 0.9rem; margin-bottom: 1.25rem; line-height: 1.5;">
+					This action permanently deletes all submitted applications and non-admin applicant user data. <strong>Administrator accounts and system access will be preserved.</strong>
+				</p>
+
+				<div style="background: #FFFFFF; padding: 1.25rem; border-radius: var(--radius-sm); border: 1px solid #FECDD3; max-width: 600px;">
+					<label class="form-label" for="wipe-confirm-input" style="color: #991B1B; font-size: 0.85rem;">
+						Security Check: Type <code>DELETE ALL APPLICATIONS AND USERS</code> to enable wipe:
+					</label>
+					<input
+						type="text"
+						id="wipe-confirm-input"
+						placeholder="DELETE ALL APPLICATIONS AND USERS"
+						class="input-field"
+						style="margin-bottom: 1rem; font-family: monospace;"
+					/>
+
+					<button id="open-wipe-modal-btn" class="btn btn-primary btn-sm" disabled style="background-color: #DC2626; opacity: 0.5; cursor: not-allowed; width: 100%;">
+						Initiate Database Wipe
 					</button>
 				</div>
 			</div>
 
-			<!-- Assignment Controls -->
-			{applications.results && applications.results.length > 0 && (
-				<div style="background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);">
-					<h3 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: #374151;">Assignment Controls</h3>
-					
-					<div style="display: grid; grid-template-columns: auto 1fr auto auto; gap: 1.5rem; align-items: center;">
-						<!-- Select All -->
-						<div style="display: flex; align-items: center; gap: 0.5rem;">
-							<input type="checkbox" id="selectAll" style="width: 18px; height: 18px; border-radius: 4px; border: 2px solid #d1d5db; margin: 0; flex-shrink: 0; vertical-align: middle;">
-							<label for="selectAll" style="font-size: 0.875rem; font-weight: 500; color: #374151; white-space: nowrap; line-height: 18px; vertical-align: middle; margin: 0; padding: 0;">Select All</label>
-						</div>
-						
-						<!-- Assignment Section -->
-						<div style="display: flex; align-items: center; gap: 0.75rem;">
-							<select id="assignToSelect" style="height: 40px; padding: 0 0.75rem; border: 2px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; min-width: 180px; background: white;">
-								<option value="">Choose reviewer to assign...</option>
-								{allAssignees.map((assignee: any) => (
-									<option value={assignee.email}>{assignee.email}</option>
-								))}
-							</select>
-							<button id="assignSelectedBtn" style="height: 40px; padding: 0 1rem; background: #6b7280; color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: not-allowed; white-space: nowrap;" disabled>
-								Assign Selected
-							</button>
-						</div>
-
-						<!-- Bulk Actions -->
-						<div style="display: flex; gap: 0.75rem;">
-							<button id="autoAssignBtn" style="height: 40px; padding: 0 1rem; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;">
-								🎯 Auto-Assign
-							</button>
-							<button id="unassignAllBtn" style="height: 40px; padding: 0 1rem; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; white-space: nowrap;">
-								🔄 Unassign All
-							</button>
-						</div>
-
-						<!-- Selected Count -->
-						<div style="font-size: 0.875rem; color: #6b7280; white-space: nowrap;">
-							<span id="selectedCount">0</span> selected
-						</div>
-					</div>
-				</div>
-			)}
-
-			{applications.results && applications.results.length > 0 ? (
-				<div class="space-y-1">
-					{applications.results.map((app: any) => {
-						const statusColors = {
-							'unassigned': 'border-gray-400',
-							'assigned': 'border-orange-500',
-							'in_review': 'border-blue-500', 
-							'completed': 'border-green-500'
-						} as const;
-						const statusTexts = {
-							'unassigned': '⚪ Unassigned',
-							'assigned': '🟡 Assigned',
-							'in_review': '🔵 In Review',
-							'completed': '🟢 Completed'
-						} as const;
-						
-						return (
-							<div 
-								class={`card hover:shadow-lg transition-shadow border-l-4 ${statusColors[app.review_status as keyof typeof statusColors] || 'border-gray-400'}`}
-								style="padding: 1rem; margin-bottom: 0.5rem;"
-							>
-								<div style="display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center;">
-									<!-- Checkbox -->
-									<input 
-										type="checkbox" 
-										class="app-checkbox" 
-										data-app-id={app.id}
-										style="width: 18px; height: 18px; margin: 0; border-radius: 4px; border: 2px solid #d1d5db;"
-									>
-									
-									<!-- Main Content -->
-									<div 
-										style="cursor: pointer; min-width: 0;"
-										onclick={`window.location.href='/admin/application/${app.id}'`}
-									>
-										<h3 style="font-size: 1.125rem; font-weight: 600; color: #111827; margin: 0 0 0.25rem 0;">
-											{app.first_name} {app.last_name}
-										</h3>
-										<p style="color: #6b7280; font-size: 0.875rem; margin: 0 0 0.5rem 0;">
-											{app.preferred_email || app.email}
-										</p>
-										<div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-											<span style="font-size: 0.875rem; font-weight: 500;">
-												{statusTexts[app.review_status as keyof typeof statusTexts] || '⚪ Unknown'}
-											</span>
-											{app.review_status === 'completed' && app.reviewer_grade && (
-												<span style={`display: inline-block; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 600; ${
-													app.reviewer_grade >= 4 ? 'background: #dcfce7; color: #166534;' :
-													app.reviewer_grade === 3 ? 'background: #fef3c7; color: #92400e;' :
-													'background: #fee2e2; color: #991b1b;'
-												}`}>
-													Grade: {app.reviewer_grade}/5
-												</span>
-											)}
-											{app.assigned_to && (
-												<span style="font-size: 0.75rem; color: #6b7280;">
-													Assigned to: {app.assigned_to}
-												</span>
-											)}
-											{app.needs_financial_aid && (
-												<span style="display: inline-block; background: #fed7aa; color: #ea580c; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 500;">
-													Financial Aid Requested
-												</span>
-											)}
-										</div>
-									</div>
-
-									<!-- Right Info -->
-									<div style="text-align: right; white-space: nowrap;">
-										<p style="font-size: 0.875rem; font-weight: 600; color: #111827; margin: 0 0 0.25rem 0;">
-											App #{app.id}
-										</p>
-										<p style="font-size: 0.75rem; color: #6b7280; margin: 0 0 0.25rem 0;">
-											{new Date(app.submitted_at).toLocaleDateString()}
-										</p>
-										<p style="font-size: 0.75rem; color: #2563eb; margin: 0; cursor: pointer;">
-											View Details →
-										</p>
-									</div>
-								</div>
-							</div>
-						);
-					})}
-				</div>
-			) : (
-				<div class="text-center py-12">
-					<div class="card">
-						<p style="color: var(--gray-500); font-size: 1.125rem;">No applications submitted yet.</p>
-					</div>
-				</div>
-			)}
 		</div>
 
-		<script>
-			document.addEventListener('DOMContentLoaded', function() {
-				// Handle application toggle
-				const toggleBtn = document.getElementById('toggle-applications-btn') as HTMLButtonElement;
-				if (toggleBtn) {
-					toggleBtn.addEventListener('click', async function() {
-						const isCurrentlyOpen = this.textContent.includes('Close');
-						const newState = !isCurrentlyOpen;
-						
-						const originalText = this.textContent;
-						this.disabled = true;
-						this.textContent = '🔄 Updating...';
+	</div>
 
-						try {
-							const formData = new FormData();
-							formData.append('isOpen', newState.toString());
+	<!-- Review Modal -->
+	<div id="review-modal" style="display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); z-index: 1000; align-items: center; justify-content: center; padding: 1.5rem;">
+		<div class="card-clean" style="max-width: 820px; width: 100%; max-height: 88vh; overflow-y: auto; padding: 2rem; position: relative; margin: 0;">
+			
+			<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.85rem;">
+				<div>
+					<h3 id="modal-applicant-name" style="font-size: 1.35rem; font-weight: 800; color: var(--slate-900); margin-bottom: 0.2rem;">Applicant Details</h3>
+					<p id="modal-applicant-email" style="color: var(--slate-500); font-size: 0.875rem; margin: 0;"></p>
+				</div>
+				<button id="close-modal-btn" class="btn btn-secondary btn-sm">Close Window</button>
+			</div>
 
-							const response = await fetch('/api/admin/toggle-applications', {
-								method: 'POST',
-								body: formData
-							});
+			<!-- Background Pill Grid -->
+			<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.85rem; margin-bottom: 1.5rem; background: var(--slate-50); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200);">
+				<div>
+					<span style="font-size: 0.725rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Location</span>
+					<div id="modal-location" style="font-weight: 700; color: var(--slate-800); font-size: 0.9rem;"></div>
+				</div>
+				<div>
+					<span style="font-size: 0.725rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Grade Level</span>
+					<div id="modal-grade" style="font-weight: 700; color: var(--slate-800); font-size: 0.9rem;"></div>
+				</div>
+				<div>
+					<span style="font-size: 0.725rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Coding Level</span>
+					<div id="modal-coding" style="font-weight: 700; color: var(--slate-800); font-size: 0.9rem;"></div>
+				</div>
+				<div>
+					<span style="font-size: 0.725rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Financial Aid</span>
+					<div id="modal-finaid" style="font-weight: 700; color: var(--slate-800); font-size: 0.9rem;"></div>
+				</div>
+			</div>
 
-							const result = await response.json();
+			<!-- Parent / Guardian Information Section -->
+			<div style="margin-bottom: 1.25rem; background: var(--slate-50); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200);">
+				<h4 style="font-size: 0.85rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; margin-bottom: 0.4rem;">Parent / Guardian Contact</h4>
+				<div id="modal-parent-info" style="font-size: 0.875rem; color: var(--slate-800); font-weight: 500;"></div>
+			</div>
 
-							if (response.ok) {
-								// Update button text and style
-								this.textContent = newState ? '🔴 Close Applications' : '🟢 Open Applications';
-								this.style.background = newState 
-									? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' 
-									: 'linear-gradient(135deg, #059669 0%, #047857 100%)';
-								
-								// Update status indicator
-								const statusIndicator = this.parentElement?.previousElementSibling?.querySelector('span');
-								if (statusIndicator) {
-									statusIndicator.textContent = newState ? '🟢 Open' : '🔴 Closed';
-									statusIndicator.style.color = newState ? '#059669' : '#dc2626';
-								}
-								
-								alert(`✅ ${result.message}`);
-							} else {
-								alert(`❌ Error: ${result.error}`);
-								this.textContent = originalText;
-							}
-						} catch (error) {
-							alert('❌ Error updating application status. Please try again.');
-							this.textContent = originalText;
-						} finally {
-							this.disabled = false;
-						}
-					});
+			<!-- Recommendation Letter Section -->
+			<div style="margin-bottom: 1.25rem; background: var(--slate-50); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200);">
+				<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+					<h4 style="font-size: 0.85rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; margin: 0;">Recommendation Letter</h4>
+					<div style="display: flex; gap: 0.4rem; align-items: center;">
+						<span id="modal-rec-badge" class="badge-pill pill-neutral"></span>
+					</div>
+				</div>
+
+				<!-- Audit Reason Box -->
+				<div id="modal-audit-box" style="display: none; background: #FEF2F2; border: 1px solid #FECDD3; border-radius: var(--radius-sm); padding: 0.85rem; margin-bottom: 0.85rem;">
+					<div style="font-weight: 700; color: #991B1B; font-size: 0.85rem; margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.3rem;">
+						<span>⚠️ Flagged Audit Details & Explanation:</span>
+					</div>
+					<ul id="modal-audit-list" style="margin: 0; padding-left: 1.25rem; font-size: 0.8rem; color: #7F1D1D; line-height: 1.5;"></ul>
+				</div>
+
+				<div id="modal-rec-meta" style="font-size: 0.875rem; color: var(--slate-800); font-weight: 500; margin-bottom: 0.6rem;"></div>
+				<div id="modal-rec-text" style="background: #FFFFFF; padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200); font-size: 0.875rem; color: var(--slate-800); white-space: pre-wrap; line-height: 1.5; max-height: 200px; overflow-y: auto;"></div>
+			</div>
+
+			<!-- Skills & ML Section -->
+			<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
+				<div style="background: var(--slate-50); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200);">
+					<span style="font-size: 0.725rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">Languages</span>
+					<div id="modal-languages" style="font-weight: 600; color: var(--slate-800); font-size: 0.875rem;"></div>
+				</div>
+				<div style="background: var(--slate-50); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200);">
+					<span style="font-size: 0.725rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase;">ML Technologies</span>
+					<div id="modal-ml-tech" style="font-weight: 600; color: var(--slate-800); font-size: 0.875rem;"></div>
+				</div>
+			</div>
+
+			<!-- Essays -->
+			<div style="margin-bottom: 1.25rem;">
+				<h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin-bottom: 0.4rem;">Essay 1: Background & Motivation</h4>
+				<div id="modal-essay-one" style="background: var(--slate-50); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200); font-size: 0.9rem; line-height: 1.6; white-space: pre-wrap; color: var(--slate-800);"></div>
+			</div>
+
+			<div style="margin-bottom: 1.5rem;">
+				<h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin-bottom: 0.4rem;">Essay 2: Goals & Career Path</h4>
+				<div id="modal-essay-two" style="background: var(--slate-50); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200); font-size: 0.9rem; line-height: 1.6; white-space: pre-wrap; color: var(--slate-800);"></div>
+			</div>
+
+			<div style="margin-bottom: 1.5rem;">
+				<h4 style="font-size: 0.95rem; font-weight: 700; color: var(--slate-800); margin-bottom: 0.4rem;">Clubs, Activities & Leadership</h4>
+				<div id="modal-clubs" style="background: var(--slate-50); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200); font-size: 0.875rem; color: var(--slate-800);"></div>
+			</div>
+
+			<!-- Rating Selector -->
+			<div style="background: var(--brand-blue-light); border: 1px solid var(--brand-blue-border); padding: 1.25rem; border-radius: var(--radius-md);">
+				<h4 style="font-size: 1rem; font-weight: 700; color: var(--brand-blue); margin-bottom: 0.6rem;">
+					Admissions Decision Rating (1–5)
+				</h4>
+				
+				<div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.4rem; margin-bottom: 1rem;">
+					{[
+						{ grade: 1, label: '1 - Strong Reject' },
+						{ grade: 2, label: '2 - Weak Reject' },
+						{ grade: 3, label: '3 - Neutral' },
+						{ grade: 4, label: '4 - Accept' },
+						{ grade: 5, label: '5 - Strong Accept' }
+					].map((item) => (
+						<button
+							type="button"
+							class="rating-btn btn btn-secondary btn-sm"
+							data-grade={item.grade}
+							style="white-space: nowrap; font-size: 0.775rem; padding: 0.5rem 0.2rem; justify-content: center;"
+						>
+							{item.label}
+						</button>
+					))}
+				</div>
+
+				<div class="form-group" style="margin-bottom: 1rem;">
+					<label class="form-label" for="modal-notes">Admin Notes & Feedback</label>
+					<textarea id="modal-notes" class="textarea-field" rows="3" placeholder="Add confidential evaluation notes..."></textarea>
+				</div>
+
+				<button id="save-rating-btn" class="btn btn-primary" style="width: 100%;">
+					Save Rating & Notes
+				</button>
+			</div>
+
+		</div>
+	</div>
+
+	<!-- Database Wipe Confirmation Modal -->
+	<div id="wipe-modal" style="display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.75); z-index: 1000; align-items: center; justify-content: center; padding: 1.5rem;">
+		<div class="card-clean" style="max-width: 500px; width: 100%; border: 2px solid #DC2626; padding: 2rem; background: #FFFFFF;">
+			<h3 style="font-size: 1.35rem; font-weight: 800; color: #DC2626; margin-bottom: 0.75rem;">
+				Final Confirmation: Wipe Database
+			</h3>
+			<p style="color: var(--slate-700); font-size: 0.925rem; line-height: 1.5; margin-bottom: 1.5rem;">
+				You are about to permanently delete <strong>all submitted applications and applicant data</strong>. This action is irreversible.
+			</p>
+			
+			<div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+				<button id="close-wipe-modal-btn" class="btn btn-secondary btn-sm">Cancel</button>
+				<button id="confirm-execute-wipe-btn" class="btn btn-primary btn-sm" style="background-color: #DC2626;">
+					Yes, Execute Permanent Wipe
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Script -->
+	<script is:inline>
+		let activeAppId = null;
+		let selectedGrade = null;
+
+		// Tab Switching
+		const tabReviewBtn = document.getElementById('tab-review-btn');
+		const tabConfigBtn = document.getElementById('tab-config-btn');
+		const sectionReview = document.getElementById('section-review');
+		const sectionConfig = document.getElementById('section-config');
+
+		tabReviewBtn?.addEventListener('click', () => {
+			tabReviewBtn.classList.add('active');
+			tabConfigBtn.classList.remove('active');
+			sectionReview.style.display = 'block';
+			sectionConfig.style.display = 'none';
+		});
+
+		tabConfigBtn?.addEventListener('click', () => {
+			tabConfigBtn.classList.add('active');
+			tabReviewBtn.classList.remove('active');
+			sectionConfig.style.display = 'block';
+			sectionReview.style.display = 'none';
+		});
+
+		// Search Filter
+		document.getElementById('search-input')?.addEventListener('input', function() {
+			const term = this.value.toLowerCase();
+			document.querySelectorAll('.app-row').forEach(row => {
+				const text = row.getAttribute('data-search')?.toLowerCase() || '';
+				row.style.display = text.includes(term) ? '' : 'none';
+			});
+		});
+
+		// Modal Review Handler
+		document.querySelectorAll('.review-btn').forEach(btn => {
+			btn.addEventListener('click', function() {
+				const app = JSON.parse(this.getAttribute('data-app'));
+				const exp = JSON.parse(app.experience_data || '{}');
+				const displayLoc = this.getAttribute('data-loc');
+				activeAppId = app.id;
+				selectedGrade = app.reviewer_grade || null;
+
+				document.getElementById('modal-applicant-name').textContent = `${app.first_name || app.user_name} ${app.last_name || ''}`;
+				document.getElementById('modal-applicant-email').textContent = `Email: ${app.preferred_email || app.user_email}`;
+				document.getElementById('modal-location').textContent = displayLoc || app.student_location;
+				document.getElementById('modal-grade').textContent = exp.grade_level || 'N/A';
+				document.getElementById('modal-coding').textContent = exp.programming_experience || 'N/A';
+				document.getElementById('modal-finaid').textContent = app.needs_financial_aid ? 'Yes' : 'No';
+
+				// Parent Info
+				const pName = exp.parent_name || 'N/A';
+				const pEmail = exp.parent_email || 'N/A';
+				const pPhone = exp.parent_phone || 'N/A';
+				document.getElementById('modal-parent-info').innerHTML = `<strong>Name:</strong> ${pName} &nbsp;|&nbsp; <strong>Email:</strong> ${pEmail} &nbsp;|&nbsp; <strong>Phone:</strong> ${pPhone}`;
+
+				// Recommendation Info & Audit Reasons
+				const recBadge = document.getElementById('modal-rec-badge');
+				const auditBox = document.getElementById('modal-audit-box');
+				const auditList = document.getElementById('modal-audit-list');
+				const recMeta = document.getElementById('modal-rec-meta');
+				const recText = document.getElementById('modal-rec-text');
+				
+				const rName = app.recommender_name || exp.recommender_name || 'Not provided';
+				const rEmail = app.recommender_email || exp.recommender_email || 'Not provided';
+				const rTitle = app.recommender_title || exp.recommender_title || '';
+				const isPersonal = app.is_personal_email === 1;
+				const isSuspicious = app.is_suspicious_submission === 1;
+
+				if (app.rec_is_submitted) {
+					recBadge.className = 'badge-pill pill-success';
+					recBadge.textContent = 'Received ✓';
+					recText.textContent = app.letter_text || 'Letter text recorded.';
+				} else {
+					recBadge.className = 'badge-pill pill-neutral';
+					recBadge.textContent = 'Pending Submission';
+					recText.textContent = 'Recommendation letter has not been submitted yet.';
 				}
 
-				const wipeBtn = document.getElementById('wipe-database-btn') as HTMLButtonElement;
-				if (wipeBtn) {
-					wipeBtn.addEventListener('click', async function() {
-						// First confirmation
-						if (!confirm('⚠️ WARNING: This will permanently delete ALL applications and user data!\n\nThis action cannot be undone. Are you absolutely sure?')) {
-							return;
-						}
-
-						// Second confirmation with typing requirement
-						const confirmText = prompt('To confirm, type exactly: WIPE_ALL_DATA');
-						if (confirmText !== 'WIPE_ALL_DATA') {
-							alert('Database wipe cancelled - confirmation text did not match.');
-							return;
-						}
-
-						// Third confirmation
-						if (!confirm('FINAL WARNING: You are about to delete ALL data in the database.\n\nThis includes:\n- All applications (drafts and submitted)\n- All user accounts (except admins)\n\nThis cannot be undone. Proceed?')) {
-							return;
-						}
-
-						const originalText = this.textContent;
-						this.disabled = true;
-						this.textContent = '🔄 Wiping...';
-
-						try {
-							const formData = new FormData();
-							formData.append('confirmationCode', 'WIPE_ALL_DATA');
-
-							const response = await fetch('/api/admin/wipe-database', {
-								method: 'POST',
-								body: formData
-							});
-
-							const result = await response.json();
-
-							if (response.ok) {
-								alert(`✅ Database wiped successfully!\n\nDeleted:\n- ${result.deleted.applications} applications\n- ${result.deleted.users} users`);
-								location.reload();
-							} else {
-								alert(`❌ Error: ${result.error}`);
-							}
-						} catch (error) {
-							alert('❌ Error wiping database. Please try again.');
-						} finally {
-							this.disabled = false;
-							this.textContent = originalText;
-						}
-					});
-				}
-
-				// Assignment controls functionality
-				const selectAllCheckbox = document.getElementById('selectAll') as HTMLInputElement;
-				const appCheckboxes = document.querySelectorAll('.app-checkbox') as NodeListOf<HTMLInputElement>;
-				const assignSelectedBtn = document.getElementById('assignSelectedBtn') as HTMLButtonElement;
-				const assignToSelect = document.getElementById('assignToSelect') as HTMLSelectElement;
-				const autoAssignBtn = document.getElementById('autoAssignBtn') as HTMLButtonElement;
-				const unassignAllBtn = document.getElementById('unassignAllBtn') as HTMLButtonElement;
-				const selectedCountSpan = document.getElementById('selectedCount') as HTMLSpanElement;
-
-				// Reviewer management elements
-				const newReviewerEmail = document.getElementById('newReviewerEmail') as HTMLInputElement;
-				const addReviewerBtn = document.getElementById('addReviewerBtn') as HTMLButtonElement;
-
-
-				// Update selected count and button state
-				function updateAssignmentControls() {
-					const selectedCount = document.querySelectorAll('.app-checkbox:checked').length;
-					selectedCountSpan.textContent = selectedCount.toString();
-					
-					const hasSelection = selectedCount > 0;
-					const hasAdminSelected = assignToSelect.value !== '';
-					
-					// Update assign button
-					assignSelectedBtn.disabled = !hasSelection || !hasAdminSelected;
-					if (assignSelectedBtn.disabled) {
-						assignSelectedBtn.style.background = '#6b7280';
-						assignSelectedBtn.style.cursor = 'not-allowed';
+				// Build Audit Explanations
+				const auditReasons = [];
+				if (isSuspicious) {
+					if (app.user_email && rEmail && app.user_email.toLowerCase().trim() === rEmail.toLowerCase().trim()) {
+						auditReasons.push(`Recommender email address (${rEmail}) matches the student's Google account email address.`);
+					}
+					if (app.applicant_device_fp && app.recommender_device_fp && app.applicant_device_fp === app.recommender_device_fp) {
+						auditReasons.push(`Browser hardware device fingerprint (${app.recommender_device_fp}) matches the applicant's computer/browser.`);
 					} else {
-						assignSelectedBtn.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
-						assignSelectedBtn.style.cursor = 'pointer';
+						auditReasons.push(`Recommendation was submitted from an active browser session logged into the applicant's account.`);
 					}
 				}
-
-				// Select all functionality
-				if (selectAllCheckbox) {
-					selectAllCheckbox.addEventListener('change', function() {
-						appCheckboxes.forEach(checkbox => {
-							checkbox.checked = this.checked;
-						});
-						updateAssignmentControls();
-					});
+				if (isPersonal) {
+					auditReasons.push(`Recommender email (${rEmail}) is a personal webmail address (@gmail.com, @yahoo.com, etc.) rather than an institutional/school domain.`);
 				}
 
-				// Individual checkbox functionality
-				appCheckboxes.forEach(checkbox => {
-					checkbox.addEventListener('change', function() {
-						// Update select all checkbox state
-						const allChecked = document.querySelectorAll('.app-checkbox:checked').length === appCheckboxes.length;
-						const someChecked = document.querySelectorAll('.app-checkbox:checked').length > 0;
-						
-						if (selectAllCheckbox) {
-							selectAllCheckbox.checked = allChecked;
-							selectAllCheckbox.indeterminate = someChecked && !allChecked;
-						}
-						
-						updateAssignmentControls();
-					});
+				if (auditReasons.length > 0) {
+					auditBox.style.display = 'block';
+					auditList.innerHTML = auditReasons.map(r => `<li>${r}</li>`).join('');
+				} else {
+					auditBox.style.display = 'none';
+					auditList.innerHTML = '';
+				}
 
-					// Stop propagation on checkbox clicks
-					checkbox.addEventListener('click', function(event) {
-						event.stopPropagation();
-					});
+				let warningText = isPersonal ? ' &nbsp;<span style="color: #D97706; font-size: 0.775rem; font-weight: 600;">(Notice: Personal Webmail Address)</span>' : '';
+				recMeta.innerHTML = `<strong>Name:</strong> ${rName} ${rTitle ? `(${rTitle})` : ''} &nbsp;|&nbsp; <strong>Email:</strong> ${rEmail}${warningText}`;
+
+				// Tech & ML
+				document.getElementById('modal-languages').textContent = (exp.languages && exp.languages.length) ? exp.languages.join(', ') : 'None';
+				document.getElementById('modal-ml-tech').textContent = (exp.ml_technologies && exp.ml_technologies.length) ? exp.ml_technologies.join(', ') : 'None';
+
+				document.getElementById('modal-essay-one').textContent = app.essay_one || 'No response provided.';
+				document.getElementById('modal-essay-two').textContent = app.essay_two || 'No response provided.';
+				document.getElementById('modal-clubs').textContent = exp.clubs_activities || 'None listed.';
+				document.getElementById('modal-notes').value = app.reviewer_notes || '';
+
+				updateRatingButtons();
+				document.getElementById('review-modal').style.display = 'flex';
+			});
+		});
+
+		function updateRatingButtons() {
+			document.querySelectorAll('.rating-btn').forEach(b => {
+				const g = parseInt(b.getAttribute('data-grade'));
+				if (g === selectedGrade) {
+					b.style.background = 'var(--brand-blue)';
+					b.style.color = '#FFFFFF';
+					b.style.borderColor = 'var(--brand-blue)';
+				} else {
+					b.style.background = '#FFFFFF';
+					b.style.color = 'var(--slate-700)';
+					b.style.borderColor = 'var(--slate-300)';
+				}
+			});
+		}
+
+		document.querySelectorAll('.rating-btn').forEach(b => {
+			b.addEventListener('click', function() {
+				selectedGrade = parseInt(this.getAttribute('data-grade'));
+				updateRatingButtons();
+			});
+		});
+
+		document.getElementById('close-modal-btn')?.addEventListener('click', () => {
+			document.getElementById('review-modal').style.display = 'none';
+		});
+
+		document.getElementById('save-rating-btn')?.addEventListener('click', async function() {
+			if (!activeAppId) return;
+			if (!selectedGrade) {
+				alert('Please select a rating between 1 and 5');
+				return;
+			}
+
+			const notes = document.getElementById('modal-notes').value;
+			try {
+				const res = await fetch('/api/admin/save-review', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ applicationId: activeAppId, grade: selectedGrade, notes })
 				});
 
-				// Admin selection change
-				if (assignToSelect) {
-					assignToSelect.addEventListener('change', updateAssignmentControls);
+				if (res.ok) {
+					location.reload();
+				} else {
+					const data = await res.json();
+					alert('Error saving rating: ' + (data.error || 'Unknown error'));
 				}
+			} catch (e) {
+				alert('Error saving rating. Please try again.');
+			}
+		});
 
-				// Assign selected applications
-				if (assignSelectedBtn) {
-					assignSelectedBtn.addEventListener('click', async function() {
-						const selectedApps = Array.from(document.querySelectorAll('.app-checkbox:checked'))
-							.map(checkbox => parseInt((checkbox as HTMLInputElement).dataset.appId || '0'))
-							.filter(id => id > 0);
-						
-						const assignToEmail = assignToSelect.value;
+		document.getElementById('toggle-apps-btn')?.addEventListener('click', async function() {
+			try {
+				const res = await fetch('/api/admin/toggle-applications', { method: 'POST' });
+				if (res.ok) location.reload();
+			} catch (e) {
+				alert('Error toggling applications status');
+			}
+		});
 
-						if (selectedApps.length === 0) {
-							alert('Please select applications to assign.');
-							return;
-						}
+		// Add Admin Handler
+		document.getElementById('add-admin-form')?.addEventListener('submit', async function(e) {
+			e.preventDefault();
+			const emailInput = document.getElementById('new-admin-email');
+			const statusDiv = document.getElementById('add-admin-status');
+			const email = emailInput.value.trim();
 
-						if (!assignToEmail) {
-							alert('Please select an admin to assign to.');
-							return;
-						}
+			try {
+				const res = await fetch('/api/admin/add-admin', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email })
+				});
+				const data = await res.json();
 
-						if (!confirm(`Assign ${selectedApps.length} applications to ${assignToEmail}?`)) {
-							return;
-						}
-
-						const originalText = this.textContent;
-						this.disabled = true;
-						this.textContent = '🔄 Assigning...';
-
-						try {
-							const response = await fetch('/api/admin/assign-applications', {
-								method: 'POST',
-								headers: {
-									'Content-Type': 'application/json',
-								},
-								body: JSON.stringify({
-									applicationIds: selectedApps,
-									assignToEmail: assignToEmail,
-									action: 'manual'
-								})
-							});
-
-							const result = await response.json();
-
-							if (response.ok) {
-								alert(`✅ ${result.message}`);
-								location.reload();
-							} else {
-								alert(`❌ Error: ${result.error}`);
-							}
-						} catch (error) {
-							alert('❌ Error assigning applications. Please try again.');
-						} finally {
-							this.disabled = false;
-							this.textContent = originalText;
-						}
-					});
+				if (res.ok) {
+					statusDiv.style.color = 'var(--success-green)';
+					statusDiv.textContent = data.message;
+					setTimeout(() => location.reload(), 1000);
+				} else {
+					statusDiv.style.color = '#DC2626';
+					statusDiv.textContent = data.error || 'Failed to add admin';
 				}
+			} catch (err) {
+				statusDiv.style.color = '#DC2626';
+				statusDiv.textContent = 'Network error while adding admin';
+			}
+		});
 
-				// Auto-assign functionality
-				if (autoAssignBtn) {
-					autoAssignBtn.addEventListener('click', async function() {
-						if (!confirm('This will automatically assign all unassigned applications evenly among all admins. Continue?')) {
-							return;
+		// Remove Admin Handler
+		document.querySelectorAll('.remove-admin-btn').forEach(btn => {
+			btn.addEventListener('click', async function() {
+				const email = this.getAttribute('data-email');
+				if (confirm(`Are you sure you want to demote ${email} and remove their admin privileges?`)) {
+					try {
+						const res = await fetch('/api/admin/remove-admin', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ email })
+						});
+						if (res.ok) {
+							location.reload();
+						} else {
+							const data = await res.json();
+							alert('Error removing admin: ' + (data.error || 'Unknown error'));
 						}
-
-						const originalText = this.textContent;
-						this.disabled = true;
-						this.textContent = '🔄 Auto-assigning...';
-
-						try {
-							const response = await fetch('/api/admin/assign-applications', {
-								method: 'POST',
-								headers: {
-									'Content-Type': 'application/json',
-								},
-								body: JSON.stringify({
-									action: 'auto_assign'
-								})
-							});
-
-							const result = await response.json();
-
-							if (response.ok) {
-								alert(`✅ ${result.message}`);
-								location.reload();
-							} else {
-								alert(`❌ Error: ${result.error}`);
-							}
-						} catch (error) {
-							alert('❌ Error auto-assigning applications. Please try again.');
-						} finally {
-							this.disabled = false;
-							this.textContent = originalText;
-						}
-					});
-				}
-
-				// Unassign all functionality
-				if (unassignAllBtn) {
-					unassignAllBtn.addEventListener('click', async function() {
-						if (!confirm('⚠️ This will unassign ALL applications and reset their review status to "unassigned". Continue?')) {
-							return;
-						}
-
-						const originalText = this.textContent;
-						this.disabled = true;
-						this.textContent = '🔄 Unassigning...';
-
-						try {
-							const response = await fetch('/api/admin/unassign-all', {
-								method: 'POST',
-								headers: {
-									'Content-Type': 'application/json',
-								}
-							});
-
-							const result = await response.json();
-
-							if (response.ok) {
-								alert(`✅ ${result.message}`);
-								location.reload();
-							} else {
-								alert(`❌ Error: ${result.error}`);
-							}
-						} catch (error) {
-							alert('❌ Error unassigning applications. Please try again.');
-						} finally {
-							this.disabled = false;
-							this.textContent = originalText;
-						}
-					});
-				}
-
-				// Reviewer management functionality
-				function updateAddReviewerButton() {
-				    if (!newReviewerEmail) return;
-					
-					const hasEmail = newReviewerEmail.value.trim() !== '';
-					const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newReviewerEmail.value.trim());
-					
-					addReviewerBtn.disabled = !hasEmail || !isValidEmail;
-					
-					if (addReviewerBtn.disabled) {
-						addReviewerBtn.style.background = '#6b7280';
-						addReviewerBtn.style.cursor = 'not-allowed';
-					} else {
-						addReviewerBtn.style.background = 'linear-gradient(135deg, #059669 0%, #047857 100%)';
-						addReviewerBtn.style.cursor = 'pointer';
+					} catch (err) {
+						alert('Error removing admin');
 					}
 				}
-
-				// Email input change
-				if (newReviewerEmail) {
-					newReviewerEmail.addEventListener('input', updateAddReviewerButton);
-					newReviewerEmail.addEventListener('keypress', function(event) {
-						if (event.key === 'Enter' && !addReviewerBtn.disabled) {
-							addReviewerBtn.click();
-						}
-					});
-				}
-
-				// Add reviewer functionality
-				if (addReviewerBtn) {
-					addReviewerBtn.addEventListener('click', async function() {
-						const email = newReviewerEmail.value.trim();
-						
-						if (!email) {
-							alert('Please enter an email address.');
-							return;
-						}
-
-						if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-							alert('Please enter a valid email address.');
-							return;
-						}
-
-						const originalText = this.textContent;
-						this.disabled = true;
-						this.textContent = '🔄 Adding...';
-
-						try {
-							const response = await fetch('/api/admin/add-reviewer', {
-								method: 'POST',
-								headers: {
-									'Content-Type': 'application/json',
-								},
-								body: JSON.stringify({
-									email: email
-								})
-							});
-
-							const result = await response.json();
-
-							if (response.ok) {
-								alert(`✅ ${result.message}`);
-								newReviewerEmail.value = '';
-								location.reload();
-							} else {
-								alert(`❌ Error: ${result.error}`);
-							}
-						} catch (error) {
-							alert('❌ Error adding reviewer. Please try again.');
-						} finally {
-							this.disabled = false;
-							this.textContent = originalText;
-							updateAddReviewerButton();
-						}
-					});
-				}
-
-				// Initial state
-				updateAssignmentControls();
-				updateAddReviewerButton();
 			});
-		</script>
-	</main>
+		});
+
+		// Multi-Layer Database Wipe Logic
+		const EXPECTED_WIPE_PHRASE = "DELETE ALL APPLICATIONS AND USERS";
+		const wipeInput = document.getElementById('wipe-confirm-input');
+		const openWipeModalBtn = document.getElementById('open-wipe-modal-btn');
+		const wipeModal = document.getElementById('wipe-modal');
+		const closeWipeModalBtn = document.getElementById('close-wipe-modal-btn');
+		const confirmExecuteWipeBtn = document.getElementById('confirm-execute-wipe-btn');
+
+		wipeInput?.addEventListener('input', function() {
+			if (this.value.trim() === EXPECTED_WIPE_PHRASE) {
+				openWipeModalBtn.disabled = false;
+				openWipeModalBtn.style.opacity = '1';
+				openWipeModalBtn.style.cursor = 'pointer';
+			} else {
+				openWipeModalBtn.disabled = true;
+				openWipeModalBtn.style.opacity = '0.5';
+				openWipeModalBtn.style.cursor = 'not-allowed';
+			}
+		});
+
+		openWipeModalBtn?.addEventListener('click', function() {
+			if (wipeInput.value.trim() === EXPECTED_WIPE_PHRASE) {
+				wipeModal.style.display = 'flex';
+			}
+		});
+
+		closeWipeModalBtn?.addEventListener('click', function() {
+			wipeModal.style.display = 'none';
+		});
+
+		confirmExecuteWipeBtn?.addEventListener('click', async function() {
+			const confirmPhrase = wipeInput.value.trim();
+			try {
+				const res = await fetch('/api/admin/wipe-database', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ confirmPhrase })
+				});
+
+				if (res.ok) {
+					alert('Database successfully wiped.');
+					location.reload();
+				} else {
+					const data = await res.json();
+					alert('Error wiping database: ' + (data.error || 'Unknown error'));
+				}
+			} catch (err) {
+				alert('Network error while executing database wipe');
+			}
+		});
+	</script>
 </Layout>
