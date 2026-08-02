@@ -81,10 +81,7 @@ export function calculateDraftSectionStatuses(user: any, application: any): Sect
     sec3Status = 'incomplete';
   }
 
-  // Section 4: optional, but opting in (Yes) requires Colab link + every timed question answered
-  const prog = exp?.programming_experience;
-  const exerciseEligible = prog === 'intermediate' || prog === 'advanced';
-  const pyExp = exp?.python_experience;
+  // Section 4: optional — if started, finish Colab link + every timed question (or skip timed)
   const pyAssessment = exp?.python_assessment;
   const pyStatus = pyAssessment?.status;
   const colabLink = (exp?.colab_link || '').trim();
@@ -93,14 +90,15 @@ export function calculateDraftSectionStatuses(user: any, application: any): Sect
     pyQuestions.length > 0 &&
     pyQuestions.every((q: any) => String(q?.answer || '').trim().length > 0);
   const timedDone = pyStatus === 'completed' || pyStatus === 'expired';
+  const timedOk = pyStatus === 'skipped' || (timedDone && allQuestionsAnswered);
 
   let sec4Status: 'complete' | 'incomplete' | 'not_started' = 'not_started';
-  if (!exerciseEligible) {
+  if (!pyStatus && !colabLink) {
+    sec4Status = 'not_started';
+  } else if (pyStatus === 'skipped' && !colabLink) {
     sec4Status = 'complete';
-  } else if (pyExp === 'no') {
-    sec4Status = 'complete';
-  } else if (pyExp === 'yes' || pyStatus) {
-    sec4Status = colabLink && timedDone && allQuestionsAnswered ? 'complete' : 'incomplete';
+  } else {
+    sec4Status = colabLink && timedOk ? 'complete' : 'incomplete';
   }
 
   return { sec1: sec1Status, sec2: sec2Status, sec3: sec3Status, sec4: sec4Status };
