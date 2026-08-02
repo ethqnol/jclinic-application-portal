@@ -262,13 +262,10 @@ if (recommendationRecord) {
 					</div>
 				</div>
 
-				<div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1rem;">
+				<div style="margin-top: 1rem;">
 					<a href="/application" class="btn btn-primary">
 						Continue Application
 					</a>
-					<button id="delete-draft-btn" class="btn btn-secondary">
-						Delete Draft
-					</button>
 				</div>
 			</div>
 		) : !applicationsOpen ? (
@@ -299,27 +296,4 @@ if (recommendationRecord) {
 		)}
 
 	</div>
-
-	<script is:inline>
-		document.addEventListener('DOMContentLoaded', function() {
-			const deleteBtn = document.getElementById('delete-draft-btn');
-			if (deleteBtn) {
-				deleteBtn.addEventListener('click', async function() {
-					if (confirm('Are you sure you want to delete your saved draft? This action cannot be undone.')) {
-						try {
-							const response = await fetch('/api/delete-draft', { method: 'POST' });
-							if (response.ok) {
-								location.reload();
-							} else {
-								const result = await response.json();
-								alert('Error deleting draft: ' + (result.error || 'Unknown error'));
-							}
-						} catch (error) {
-							alert('Error deleting draft. Please try again.');
-						}
-					}
-				});
-			}
-		});
-	</script>
 </Layout>
