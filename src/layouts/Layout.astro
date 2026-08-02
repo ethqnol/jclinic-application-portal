@@ -5,9 +5,10 @@ export interface Props {
 	title: string;
 	session?: any;
 	userRole?: string;
+	isTestMode?: boolean;
 }
 
-const { title, session, userRole } = Astro.props;
+const { title, session, userRole, isTestMode = false } = Astro.props;
 ---
 
 <!DOCTYPE html>
@@ -45,26 +46,31 @@ const { title, session, userRole } = Astro.props;
 								<span class="user-name">
 									{session.user.name}
 								</span>
-								{userRole === 'admin' && (
+								{isTestMode && (
+									<span class="user-badge" style="background: #FEF3C7; color: #92400E;">Test Mode</span>
+								)}
+								{userRole === 'admin' && !isTestMode && (
 									<span class="user-badge badge-admin">Admin</span>
 								)}
 							</div>
-							<div class="user-actions">
-								{userRole === 'admin' ? (
-									<a href="/admin" class="btn btn-secondary btn-sm">
-										Admin Console
-									</a>
-								) : (
-									<a href="/dashboard" class="btn btn-secondary btn-sm">
-										Dashboard
-									</a>
-								)}
-								<form method="POST" action="/api/auth/logout" class="logout-form">
-									<button type="submit" class="btn btn-secondary btn-sm">
-										Logout
-									</button>
-								</form>
-							</div>
+							{!isTestMode && (
+								<div class="user-actions">
+									{userRole === 'admin' ? (
+										<a href="/admin" class="btn btn-secondary btn-sm">
+											Admin Console
+										</a>
+									) : (
+										<a href="/dashboard" class="btn btn-secondary btn-sm">
+											Dashboard
+										</a>
+									)}
+									<form method="POST" action="/api/auth/logout" class="logout-form">
+										<button type="submit" class="btn btn-secondary btn-sm">
+											Logout
+										</button>
+									</form>
+								</div>
+							)}
 						</div>
 					) : (
 						<div class="header-actions">

@@ -377,6 +377,19 @@ const gradeColors: Record<number, string> = {
 				</div>
 			</div>
 
+			<!-- Python Assessment -->
+			<div id="modal-python-section" style="display: none; margin-bottom: 1.25rem; background: var(--slate-50); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid var(--slate-200);">
+				<h4 style="font-size: 0.85rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; margin-bottom: 0.6rem;">Python Skill Assessment</h4>
+				<div style="font-size: 0.875rem; color: var(--slate-800); margin-bottom: 0.5rem;">
+					<strong>Python experience:</strong> <span id="modal-python-exp">N/A</span>
+					&nbsp;|&nbsp; <strong>Status:</strong> <span id="modal-python-status">N/A</span>
+				</div>
+				<div style="font-size: 0.875rem; color: var(--slate-800); margin-bottom: 0.75rem;">
+					<strong>Colab link:</strong> <a id="modal-colab-link" href="#" target="_blank" rel="noopener noreferrer" style="color: var(--brand-blue); word-break: break-all;">None provided</a>
+				</div>
+				<div id="modal-python-questions"></div>
+			</div>
+
 			<!-- Essays -->
 			<div style="margin-bottom: 1.25rem;">
 				<h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin-bottom: 0.4rem;">Essay 1: Background & Motivation</h4>
@@ -559,6 +572,96 @@ const gradeColors: Record<number, string> = {
 				// Tech & ML
 				document.getElementById('modal-languages').textContent = (exp.languages && exp.languages.length) ? exp.languages.join(', ') : 'None';
 				document.getElementById('modal-ml-tech').textContent = (exp.ml_technologies && exp.ml_technologies.length) ? exp.ml_technologies.join(', ') : 'None';
+
+				const pySection = document.getElementById('modal-python-section');
+				const pyAssess = exp.python_assessment;
+				const pyQuestionsEl = document.getElementById('modal-python-questions');
+				const colabLinkEl = document.getElementById('modal-colab-link');
+				if (exp.python_experience || pyAssess || exp.colab_link) {
+					pySection.style.display = 'block';
+					document.getElementById('modal-python-exp').textContent = exp.python_experience || 'N/A';
+					document.getElementById('modal-python-status').textContent = pyAssess?.status || 'not started';
+
+					if (exp.colab_link) {
+						colabLinkEl.href = exp.colab_link;
+						colabLinkEl.textContent = exp.colab_link;
+						colabLinkEl.style.pointerEvents = 'auto';
+					} else {
+						colabLinkEl.removeAttribute('href');
+						colabLinkEl.textContent = 'None provided';
+						colabLinkEl.style.pointerEvents = 'none';
+					}
+
+					pyQuestionsEl.style.cssText = '';
+					if (pyAssess?.questions?.length) {
+						pyQuestionsEl.innerHTML = '';
+						pyAssess.questions.forEach((q, idx) => {
+							const block = document.createElement('div');
+							block.style.cssText = 'margin-bottom: 1rem; padding-bottom: 0.85rem; border-bottom: 1px solid var(--slate-200);';
+
+							const heading = document.createElement('div');
+							heading.style.cssText = 'font-size: 0.75rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; margin-bottom: 0.25rem;';
+							heading.textContent = `Question ${idx + 1}: ${q.title || q.id || ''}`;
+							block.appendChild(heading);
+
+							const pre = document.createElement('pre');
+							pre.style.cssText = 'background: #0F172A; color: #E2E8F0; padding: 0.75rem; border-radius: var(--radius-sm); font-size: 0.775rem; overflow-x: auto; white-space: pre-wrap; max-height: 180px; margin: 0 0 0.5rem 0;';
+							pre.textContent = q.code || '';
+							block.appendChild(pre);
+
+							const promptEl = document.createElement('div');
+							promptEl.style.cssText = 'font-size: 0.85rem; color: var(--slate-800); font-weight: 600; margin-bottom: 0.35rem;';
+							promptEl.textContent = q.prompt || '';
+							block.appendChild(promptEl);
+
+							const ansLabel = document.createElement('div');
+							ansLabel.style.cssText = 'font-size: 0.75rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; margin-bottom: 0.2rem;';
+							ansLabel.textContent = 'Answer';
+							block.appendChild(ansLabel);
+
+							const ansEl = document.createElement('div');
+							ansEl.style.cssText = 'font-size: 0.85rem; color: var(--slate-800); white-space: pre-wrap;';
+							ansEl.textContent = q.answer || '—';
+							block.appendChild(ansEl);
+
+							pyQuestionsEl.appendChild(block);
+						});
+					} else if (pyAssess?.question_prompt || pyAssess?.submitted_code) {
+						// Legacy coding assessment format
+						pyQuestionsEl.innerHTML = '';
+						const legacy = document.createElement('div');
+
+						const addLabeled = (label, text, isPre) => {
+							const wrap = document.createElement('div');
+							wrap.style.marginBottom = '0.6rem';
+							const lab = document.createElement('div');
+							lab.style.cssText = 'font-size: 0.75rem; font-weight: 700; color: var(--slate-500); text-transform: uppercase; margin-bottom: 0.25rem;';
+							lab.textContent = label;
+							wrap.appendChild(lab);
+							const body = document.createElement(isPre ? 'pre' : 'div');
+							if (isPre) {
+								body.style.cssText = 'background: #0F172A; color: #E2E8F0; padding: 0.75rem; border-radius: var(--radius-sm); font-size: 0.775rem; overflow-x: auto; white-space: pre-wrap; max-height: 220px; margin: 0;';
+							} else {
+								body.style.cssText = 'font-size: 0.85rem; color: var(--slate-800); white-space: pre-wrap;';
+							}
+							body.textContent = text || '—';
+							wrap.appendChild(body);
+							legacy.appendChild(wrap);
+						};
+
+						addLabeled('Prompt (legacy)', pyAssess.question_prompt, false);
+						addLabeled('Submitted Code', pyAssess.submitted_code, true);
+						addLabeled('Follow-up Question', pyAssess.followup_question, false);
+						addLabeled('Follow-up Answer', pyAssess.followup_answer, false);
+						pyQuestionsEl.appendChild(legacy);
+					} else {
+						pyQuestionsEl.textContent = 'No questions submitted.';
+						pyQuestionsEl.style.cssText = 'font-size: 0.85rem; color: var(--slate-600);';
+					}
+				} else {
+					pySection.style.display = 'none';
+					pyQuestionsEl.innerHTML = '';
+				}
 
 				document.getElementById('modal-essay-one').textContent = app.essay_one || 'No response provided.';
 				document.getElementById('modal-essay-two').textContent = app.essay_two || 'No response provided.';

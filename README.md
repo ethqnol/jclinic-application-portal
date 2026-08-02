@@ -52,6 +52,14 @@ GOOGLE_CLIENT_SECRET = "your-google-client-secret"
 AUTH_SECRET = "your-random-auth-secret"
 ```
 
+Secrets (set via Cloudflare Pages environment variables / Wrangler secrets, or local `.env` for `import.meta.env` fallback):
+- `OPENAI_API_KEY` — used by the optional Python skill assessment follow-up question
+- `GMAIL_APP_PASSWORD` (or `SMTP_PASSWORD`) — used to send recommendation / confirmation emails
+
+API routes read secrets with the existing pattern:
+`context.locals.runtime?.env?.KEY || import.meta.env.KEY`
+(Cloudflare runtime first, then Astro/`import.meta.env` for local development).
+
 ### 4. Database Initialization
 
 Initialize the database schema:

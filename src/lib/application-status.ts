@@ -17,11 +17,12 @@ export interface SectionStatus {
   sec1: 'complete' | 'incomplete' | 'not_started';
   sec2: 'complete' | 'incomplete' | 'not_started';
   sec3: 'complete' | 'incomplete' | 'not_started';
+  sec4: 'complete' | 'incomplete' | 'not_started';
 }
 
 export function calculateDraftSectionStatuses(user: any, application: any): SectionStatus {
   if (!application) {
-    return { sec1: 'not_started', sec2: 'not_started', sec3: 'not_started' };
+    return { sec1: 'not_started', sec2: 'not_started', sec3: 'not_started', sec4: 'not_started' };
   }
 
   let exp: any = {};
@@ -80,5 +81,27 @@ export function calculateDraftSectionStatuses(user: any, application: any): Sect
     sec3Status = 'incomplete';
   }
 
-  return { sec1: sec1Status, sec2: sec2Status, sec3: sec3Status };
+  // Section 4: optional, but opting in (Yes) requires Colab link + every timed question answered
+  const prog = exp?.programming_experience;
+  const exerciseEligible = prog === 'intermediate' || prog === 'advanced';
+  const pyExp = exp?.python_experience;
+  const pyAssessment = exp?.python_assessment;
+  const pyStatus = pyAssessment?.status;
+  const colabLink = (exp?.colab_link || '').trim();
+  const pyQuestions = pyAssessment?.questions || [];
+  const allQuestionsAnswered =
+    pyQuestions.length > 0 &&
+    pyQuestions.every((q: any) => String(q?.answer || '').trim().length > 0);
+  const timedDone = pyStatus === 'completed' || pyStatus === 'expired';
+
+  let sec4Status: 'complete' | 'incomplete' | 'not_started' = 'not_started';
+  if (!exerciseEligible) {
+    sec4Status = 'complete';
+  } else if (pyExp === 'no') {
+    sec4Status = 'complete';
+  } else if (pyExp === 'yes' || pyStatus) {
+    sec4Status = colabLink && timedDone && allQuestionsAnswered ? 'complete' : 'incomplete';
+  }
+
+  return { sec1: sec1Status, sec2: sec2Status, sec3: sec3Status, sec4: sec4Status };
 }

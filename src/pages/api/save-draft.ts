@@ -40,6 +40,8 @@ export const POST: APIRoute = async (context) => {
       needsFinancialAid: formData.get('needs_financial_aid') as string,
       clubsActivities: formData.get('clubs_activities') as string,
       finalThoughts: formData.get('final_thoughts') as string,
+      pythonExperience: (formData.get('python_experience') as string) || undefined,
+      colabLink: (formData.get('colab_link') as string) || undefined,
       currentStep: formData.get('current_step') ? parseInt(formData.get('current_step') as string) : undefined,
     };
 

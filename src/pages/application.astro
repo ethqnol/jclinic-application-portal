@@ -1,63 +1,92 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { getSession, getUserRole } from "../lib/auth";
+import { getSession, getUserRole, type Session } from "../lib/auth";
 import { getApplicationStatus, calculateDraftSectionStatuses } from "../lib/application-status";
+import { isDevTestRequest } from "../lib/dev-test";
 
-const session = await getSession(Astro);
+const isTestMode = isDevTestRequest(Astro.locals, Astro.url);
+
+const TEST_SESSION: Session = {
+    user: {
+        id: "dev-test-user",
+        email: "test@example.com",
+        name: "Test Applicant",
+        first_name: "Test",
+        last_name: "Applicant",
+        preferred_email: "test@example.com",
+    },
+};
+
+let session: Session | null = null;
+let userRole: "admin" | "user" = "user";
+let applicationsOpen = true;
+let existingApplication: any = null;
+let currentUser = TEST_SESSION.user;
+let draftData: any = {};
+
+if (isTestMode) {
+    session = TEST_SESSION;
+    currentUser = TEST_SESSION.user;
+} else {
+    session = await getSession(Astro);
+    if (!session) {
+        return Astro.redirect("/");
+    }
+
+    const db = Astro.locals.runtime?.env?.DB;
+    userRole = db ? await getUserRole(session.user.email, db) : "user";
+    applicationsOpen = db ? await getApplicationStatus(db) : true;
+    currentUser = session.user;
+
+    if (db) {
+        existingApplication = await db
+            .prepare("SELECT * FROM applications WHERE user_id = ?")
+            .bind(session.user.id)
+            .first();
+
+        const dbUser: any = await db
+            .prepare("SELECT * FROM users WHERE id = ?")
+            .bind(session.user.id)
+            .first();
+
+        if (dbUser) {
+            currentUser = {
+                id: String(dbUser.id),
+                email: String(dbUser.email || ""),
+                name: String(dbUser.name || ""),
+                first_name: String(dbUser.first_name || ""),
+                last_name: String(dbUser.last_name || ""),
+                preferred_email: String(dbUser.preferred_email || dbUser.email || ""),
+            };
+        }
+    }
+
+    if (existingApplication && !existingApplication.is_draft) {
+        return Astro.redirect("/dashboard");
+    }
+
+    if (!applicationsOpen && !existingApplication) {
+        return Astro.redirect("/applications-closed");
+    }
+
+    if (existingApplication && existingApplication.is_draft) {
+        try {
+            draftData = JSON.parse(existingApplication.experience_data || "{}");
+        } catch (e) {
+            draftData = {};
+        }
+    }
+}
+
 if (!session) {
     return Astro.redirect("/");
 }
 
-const db = Astro.locals.runtime?.env?.DB;
-const userRole = db ? await getUserRole(session.user.email, db) : "user";
-const applicationsOpen = db ? await getApplicationStatus(db) : true;
-
-let existingApplication: any = null;
-let currentUser = session.user;
-
-if (db) {
-    existingApplication = await db
-        .prepare("SELECT * FROM applications WHERE user_id = ?")
-        .bind(session.user.id)
-        .first();
-
-    const dbUser: any = await db
-        .prepare("SELECT * FROM users WHERE id = ?")
-        .bind(session.user.id)
-        .first();
-
-    if (dbUser) {
-        currentUser = {
-            id: String(dbUser.id),
-            email: String(dbUser.email || ""),
-            name: String(dbUser.name || ""),
-            first_name: String(dbUser.first_name || ""),
-            last_name: String(dbUser.last_name || ""),
-            preferred_email: String(dbUser.preferred_email || dbUser.email || ""),
-        };
-    }
-}
-
-if (existingApplication && !existingApplication.is_draft) {
-    return Astro.redirect("/dashboard");
-}
-
-if (!applicationsOpen && !existingApplication) {
-    return Astro.redirect("/applications-closed");
-}
-
-let draftData: any = {};
-if (existingApplication && existingApplication.is_draft) {
-    try {
-        draftData = JSON.parse(existingApplication.experience_data || "{}");
-    } catch (e) {
-        draftData = {};
-    }
-}
-
 const currentLoc = existingApplication?.student_location || draftData?.student_location || "";
 const currentLocDetail = draftData?.location_detail || "";
-const initialStep = draftData?.current_step || 1;
+// Legacy drafts used step 4 for Review; Review is now step 5 (Python optional is 4)
+const rawInitialStep = draftData?.current_step || 1;
+const initialStep = rawInitialStep === 4 ? 5 : rawInitialStep;
 const initialSectionStatuses = calculateDraftSectionStatuses(currentUser, existingApplication);
 
 const usStates = [
@@ -82,9 +111,25 @@ const mlFrameworks = [
 ];
 ---
 
-<Layout title="Application Form - Application Portal" session={session} userRole={userRole}>
+<Layout title={isTestMode ? "Test Application Form" : "Application Form - Application Portal"} session={session} userRole={userRole} isTestMode={isTestMode}>
     <div class="container" style="max-width: 1140px;">
         
+        {isTestMode && (
+            <div class="notice-box" style="margin-bottom: 1.5rem; background: #FFFBEB; border-color: #F59E0B; color: #92400E;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <div>
+                    <div class="notice-title">Local test mode</div>
+                    <p class="notice-body">
+                        No Google sign-in required. Drafts, submissions, and assessments are simulated in the browser and are not written to the database.
+                    </p>
+                </div>
+            </div>
+        )}
+
         <div style="margin-bottom: 2rem;">
             <h2 style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin-bottom: 0.25rem;">
                 Bootcamp Application Form
@@ -108,7 +153,8 @@ const mlFrameworks = [
                         { num: 1, label: '1. Personal & Parent Info', desc: 'Contact details & location' },
                         { num: 2, label: '2. Background & Skills', desc: 'Experience, languages & ML' },
                         { num: 3, label: '3. Essays', desc: 'Two required essays' },
-                        { num: 4, label: '4. Review & Submit', desc: 'Final application check' }
+                        { num: 4, label: '4. Python (Optional)', desc: 'Practice Colab & short exercise' },
+                        { num: 5, label: '5. Review & Submit', desc: 'Final application check' }
                     ].map((step) => (
                         <button
                             type="button"
@@ -172,9 +218,10 @@ const mlFrameworks = [
                     </div>
                 </div>
 
-                <form method="POST" action="/api/submit-application" id="application-form">
+                <form method="POST" action={isTestMode ? "#" : "/api/submit-application"} id="application-form">
                     <input type="hidden" name="current_step" id="current_step_input" value={initialStep} />
                     <input type="hidden" name="device_fp" id="applicant_device_fp_input" value="" />
+                    {isTestMode && <input type="hidden" id="is_test_mode" value="1" />}
 
                     <!-- SECTION 1: PERSONAL, PARENT & RECOMMENDER INFORMATION -->
                     <div id="form-section-1" class="wizard-section" style="display: none;">
@@ -568,6 +615,20 @@ const mlFrameworks = [
                                 3. Essay Responses
                             </h3>
 
+                            <div class="notice-box notice-warning" style="margin-bottom: 1.25rem; background: #FFFBEB; border-color: #FCD34D;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;">
+                                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                </svg>
+                                <div>
+                                    <div class="notice-title" style="color: #92400E;">Write essays outside the portal</div>
+                                    <p class="notice-body" style="color: #78350F; line-height: 1.5;">
+                                        Please <strong>do not write your essays directly in this portal</strong>. Draft them in a Google Doc (or another word processor), then copy and paste your final text into the fields below. This helps protect your work if the page refreshes.
+                                    </p>
+                                </div>
+                            </div>
+
                             <!-- Essay 1 -->
                             <div class="form-group">
                                 <label class="form-label" for="essay_one">
@@ -630,17 +691,178 @@ const mlFrameworks = [
                                     Save Section Draft
                                 </button>
                                 <button type="button" class="btn btn-primary goto-step-btn" data-target="4">
+                                    Next: Python (Optional) →
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 4: OPTIONAL PYTHON PRACTICE -->
+                    <div id="form-section-4" class="wizard-section" style="display: none;">
+                        <div class="card-clean">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 0.5rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
+                                4. Python Practice (Optional)
+                            </h3>
+                            <p style="color: var(--slate-600); font-size: 0.925rem; margin-bottom: 1.5rem; line-height: 1.55;">
+                                This section is optional and does not block submission. Answer the Python experience question first. If you select No, the rest of this section stays locked. If you select Yes, you are expected to finish both parts: answer every timed question and submit your shared Colab link.
+                            </p>
+
+                            <!-- Python experience question first (shown when experience > beginner) -->
+                            <div id="python-assessment-gate" style="display: none; margin-bottom: 1.25rem;">
+                                <div style="border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.15rem; background: var(--slate-50);">
+                                    <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--slate-900); margin-bottom: 0.75rem;">
+                                        Do you have experience with Python?
+                                    </h4>
+                                    <p style="font-size: 0.875rem; color: var(--slate-700); margin-bottom: 0.75rem; line-height: 1.5;">
+                                        Select Yes to unlock the timed questions and optional Colab. Select No to skip this entire section.
+                                    </p>
+
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <div style="display: flex; gap: 0.75rem;">
+                                            <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.65rem; background: #FFFFFF; border: 1px solid var(--slate-200); border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-size: 0.875rem;">
+                                                <input
+                                                    type="radio"
+                                                    name="python_experience"
+                                                    id="python_experience_yes"
+                                                    value="yes"
+                                                    checked={draftData?.python_experience === "yes"}
+                                                    style="accent-color: var(--brand-blue);"
+                                                />
+                                                Yes
+                                            </label>
+                                            <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.65rem; background: #FFFFFF; border: 1px solid var(--slate-200); border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-size: 0.875rem;">
+                                                <input
+                                                    type="radio"
+                                                    name="python_experience"
+                                                    id="python_experience_no"
+                                                    value="no"
+                                                    checked={draftData?.python_experience === "no"}
+                                                    style="accent-color: var(--brand-blue);"
+                                                />
+                                                No
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div id="python-experience-blocked" style="display: none; margin-top: 0.85rem; padding: 0.75rem 0.85rem; background: var(--brand-blue-light); border: 1px solid var(--brand-blue-border); border-radius: var(--radius-sm);">
+                                        <p style="font-size: 0.875rem; color: var(--brand-blue-dark); margin: 0; line-height: 1.5; font-weight: 600;">
+                                            You selected No, so the timed Python questions and Colab notebook are locked. You can continue to Review whenever you are ready.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Timed Python exercise (unlocked only when Yes) -->
+                            <div id="python-test-offer" style="display: none; margin-bottom: 1.25rem;">
+                                <div style="border: 1px solid var(--brand-blue-border); border-radius: var(--radius-sm); padding: 1.15rem; background: var(--brand-blue-light);">
+                                    <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin-bottom: 0.5rem;">
+                                        Timed Python Questions, Clock Starts When You Begin
+                                    </h4>
+                                    <p style="font-size: 0.875rem; color: var(--slate-800); margin-bottom: 0.75rem; line-height: 1.55;">
+                                        These questions are <strong>timed</strong>. Once you press Start, the clock runs and you <strong>cannot pause it</strong>. You will have a limited window to finish both questions. Plan before you begin.
+                                    </p>
+                                    <p style="font-size: 0.875rem; color: var(--slate-800); margin-bottom: 0.75rem; line-height: 1.55;">
+                                        These are not coding tasks you run in an editor. Each question shows a short program and asks you to <strong>think through the logic</strong>: what happens, what breaks, and why. We want to see your thinking ability.
+                                    </p>
+                                    <p style="font-size: 0.8rem; color: var(--brand-blue-dark); margin-bottom: 0.85rem; line-height: 1.5; font-weight: 600;">
+                                        Use your own intuition. Do not use AI tools, search for answers, or ask someone else for help. An honest answer that shows how you reason is better than a polished answer that is not yours.
+                                    </p>
+                                    <div id="python-test-actions" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                                        <button type="button" id="python-test-start-btn" class="btn btn-primary btn-sm">
+                                            Start Timed Questions
+                                        </button>
+                                        <button type="button" id="python-test-skip-btn" class="btn btn-secondary btn-sm">
+                                            Skip
+                                        </button>
+                                    </div>
+                                    <div id="python-test-status" style="font-size: 0.8rem; color: var(--slate-600); margin-bottom: 0.5rem;" aria-live="polite"></div>
+
+                                    <div id="python-test-workspace" style="display: none;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap;">
+                                            <span style="font-size: 0.8rem; font-weight: 700; color: var(--brand-blue); text-transform: uppercase;">Timed Questions (2 total)</span>
+                                            <span id="python-timer" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; color: var(--brand-blue); font-size: 0.95rem;">10:00</span>
+                                        </div>
+                                        <div id="python-questions-container"></div>
+                                        <button type="button" id="python-submit-answers-btn" class="btn btn-primary btn-sm" style="margin-top: 0.25rem;">
+                                            Submit Answers
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="python-assessment-not-applicable" style="display: none; border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.15rem; background: var(--slate-50); margin-bottom: 1.25rem;">
+                                <p style="font-size: 0.875rem; color: var(--slate-700); margin: 0; line-height: 1.5;">
+                                    The timed Python questions are offered when you select Intermediate or Advanced programming experience in Background &amp; Skills. You can still use the optional Colab notebook below.
+                                </p>
+                            </div>
+
+                            <!-- Optional Colab notebook (unlocked for beginners, or when Yes) -->
+                            <div id="python-colab-section" style="border: 1px solid var(--brand-blue-border); border-radius: var(--radius-sm); padding: 1.15rem; background: var(--brand-blue-light); margin-bottom: 1.25rem;">
+                                <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin-bottom: 0.5rem;">
+                                    Optional Colab Problems, Sharing Required
+                                </h4>
+                                <p style="font-size: 0.875rem; color: var(--slate-800); margin-bottom: 0.75rem; line-height: 1.55;">
+                                    Completing this Colab is optional, but if you do it, you <strong>must</strong> follow these steps exactly. If we cannot open your notebook, we <strong>cannot grade your answers</strong> and it will not help your application.
+                                </p>
+                                <ol style="font-size: 0.875rem; color: var(--slate-800); margin: 0 0 0.85rem 1.15rem; padding: 0; line-height: 1.6;">
+                                    <li style="margin-bottom: 0.35rem;"><strong>Make a copy</strong> of the Colab notebook into your own Google Drive (File → Save a copy in Drive).</li>
+                                    <li style="margin-bottom: 0.35rem;"><strong>Answer the questions</strong> in <em>your</em> copy. Do not edit the original shared notebook.</li>
+                                    <li style="margin-bottom: 0.35rem;"><strong>Update sharing</strong> so that <strong>Anyone with the link</strong> can access it (Viewer is fine). Private notebooks cannot be graded.</li>
+                                    <li><strong>Paste the link</strong> to your shared copy in the box below.</li>
+                                </ol>
+                                <p style="font-size: 0.8rem; color: var(--brand-blue-dark); margin-bottom: 0.85rem; line-height: 1.5; font-weight: 600;">
+                                    If you're stuck on sharing, first search Google or ask an LLM how to share a Google Colab notebook with “Anyone with the link.” If you still need help after that, email <a href="mailto:jclinic@mit.edu" style="color: var(--brand-blue); text-decoration: underline;">jclinic@mit.edu</a>.
+                                </p>
+                                <a
+                                    href="https://colab.research.google.com/drive/1VGPmBhv9M68eAm3fQkfU9GRRXPfkle7b"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="btn btn-primary btn-sm"
+                                    style="margin-bottom: 1rem;"
+                                >
+                                    Open Original Colab Notebook ↗
+                                </a>
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="form-label" for="colab_link">
+                                        Your shared Colab link
+                                        <span style="font-weight: 400; color: var(--slate-600);"> (optional, only if you completed the notebook)</span>
+                                    </label>
+                                    <input
+                                        type="url"
+                                        id="colab_link"
+                                        name="colab_link"
+                                        class="input-field"
+                                        maxlength="500"
+                                        placeholder="https://colab.research.google.com/drive/..."
+                                        value={draftData?.colab_link || ""}
+                                    />
+                                    <p style="font-size: 0.75rem; color: var(--brand-blue-dark); margin-top: 0.4rem; margin-bottom: 0; font-weight: 600;">
+                                        Double-check that anyone with this link can open the notebook before submitting.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                            <button type="button" class="btn btn-secondary goto-step-btn" data-target="3">
+                                ← Back: Essays
+                            </button>
+                            <div style="display: flex; gap: 0.75rem;">
+                                <button type="button" class="btn btn-secondary save-section-btn">
+                                    Save Section Draft
+                                </button>
+                                <button type="button" class="btn btn-primary goto-step-btn" data-target="5">
                                     Next: Review Application →
                                 </button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- SECTION 4: REVIEW & FINAL SUBMIT (Full Information Summary) -->
-                    <div id="form-section-4" class="wizard-section" style="display: none;">
+                    <!-- SECTION 5: REVIEW & FINAL SUBMIT (Full Information Summary) -->
+                    <div id="form-section-5" class="wizard-section" style="display: none;">
                         <div class="card-clean">
                             <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--slate-900); margin-bottom: 1.25rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.6rem;">
-                                4. Review & Submit Application
+                                5. Review & Submit Application
                             </h3>
 
                             <p style="color: var(--slate-600); font-size: 0.925rem; margin-bottom: 1.5rem;">
@@ -706,6 +928,24 @@ const mlFrameworks = [
                                     </div>
                                 </div>
 
+                                <!-- Python Practice Summary Card (shown when anything was filled) -->
+                                <div id="rev-python-section" style="display: none; background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 1.25rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--slate-200); padding-bottom: 0.5rem;">
+                                        <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--brand-blue); margin: 0;">4. Python Practice (Optional)</h4>
+                                        <button type="button" class="btn btn-secondary btn-sm goto-step-btn" data-target="4" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">Edit Section 4</button>
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; font-size: 0.875rem; margin-bottom: 0.75rem;">
+                                        <div id="rev-python-exp-row"><strong>Python Experience:</strong> <span id="rev-python-exp">-</span></div>
+                                        <div id="rev-python-status-row"><strong>Timed Questions:</strong> <span id="rev-python-status">-</span></div>
+                                        <div id="rev-colab-row" style="grid-column: 1 / -1;">
+                                            <strong>Colab Link:</strong>
+                                            <a id="rev-colab-link" href="#" target="_blank" rel="noopener noreferrer" style="color: var(--brand-blue); word-break: break-all; margin-left: 0.25rem;"></a>
+                                            <span id="rev-colab-none" style="color: var(--slate-600);"></span>
+                                        </div>
+                                    </div>
+                                    <div id="rev-python-answers" style="display: none; flex-direction: column; gap: 0.75rem; font-size: 0.875rem; margin-top: 0.25rem;"></div>
+                                </div>
+
                             </div>
 
                             <button
@@ -716,11 +956,12 @@ const mlFrameworks = [
                             >
                                 {applicationsOpen ? "Submit Final Application" : "Submissions Closed"}
                             </button>
+                            <div id="test-submit-status" style="font-size: 0.875rem; text-align: center; margin-top: 0.75rem;" aria-live="polite"></div>
                         </div>
 
                         <div style="display: flex; justify-content: flex-start;">
-                            <button type="button" class="btn btn-secondary goto-step-btn" data-target="3">
-                                ← Back to Essays
+                            <button type="button" class="btn btn-secondary goto-step-btn" data-target="4">
+                                ← Back to Python (Optional)
                             </button>
                         </div>
                     </div>
@@ -733,12 +974,15 @@ const mlFrameworks = [
     </div>
 
     <!-- Data arrays for client side -->
-    <script is:inline define:vars={{ usStates, countries, currentLocDetail, initialStep, initialSectionStatuses }}>
+    <script is:inline define:vars={{ usStates, countries, currentLocDetail, initialStep, initialSectionStatuses, draftData, isTestMode }}>
         window.US_STATES = usStates;
         window.COUNTRIES = countries;
         window.INITIAL_LOC_DETAIL = currentLocDetail;
         window.INITIAL_STEP = initialStep;
         window.INITIAL_SECTION_STATUSES = initialSectionStatuses;
+        window.DRAFT_PYTHON_ASSESSMENT = (draftData && draftData.python_assessment) ? draftData.python_assessment : null;
+        window.DRAFT_PYTHON_EXPERIENCE = (draftData && draftData.python_experience) ? draftData.python_experience : null;
+        window.IS_TEST_MODE = Boolean(isTestMode);
     </script>
 
     <!-- Client-side Script -->
@@ -765,7 +1009,8 @@ const mlFrameworks = [
         }
 
         let currentStep = window.INITIAL_STEP || 1;
-        let sectionStatuses = window.INITIAL_SECTION_STATUSES || { sec1: 'not_started', sec2: 'not_started', sec3: 'not_started' };
+        let sectionStatuses = window.INITIAL_SECTION_STATUSES || { sec1: 'not_started', sec2: 'not_started', sec3: 'not_started', sec4: 'not_started' };
+        let testPythonAssessment = null;
 
         function evaluateClientSectionStatuses() {
             // Sec 1
@@ -811,6 +1056,30 @@ const mlFrameworks = [
                 sectionStatuses.sec3 = 'not_started';
             }
 
+            // Sec 4: optional, but if you opt in (Yes) you must finish Colab link + every timed question
+            const pyExp = document.querySelector('input[name="python_experience"]:checked')?.value;
+            const pyAssessment = testPythonAssessment || window.DRAFT_PYTHON_ASSESSMENT || null;
+            const pyStatus = pyAssessment?.status || null;
+            const exerciseEligible = prog === 'intermediate' || prog === 'advanced';
+            const colabLink = document.getElementById('colab_link')?.value?.trim() || '';
+            const pyQuestions = pyAssessment?.questions || [];
+            const allQuestionsAnswered = pyQuestions.length > 0 && pyQuestions.every((q) => {
+                const el = document.getElementById(`python-answer-${q.id}`);
+                const ans = el ? el.value : (q.answer || '');
+                return String(ans).trim().length > 0;
+            });
+            const timedDone = pyStatus === 'completed' || pyStatus === 'expired';
+
+            if (!exerciseEligible) {
+                sectionStatuses.sec4 = 'complete';
+            } else if (pyExp === 'no') {
+                sectionStatuses.sec4 = 'complete';
+            } else if (pyExp === 'yes' || pyStatus) {
+                sectionStatuses.sec4 = (colabLink && timedDone && allQuestionsAnswered) ? 'complete' : 'incomplete';
+            } else {
+                sectionStatuses.sec4 = 'not_started';
+            }
+
             updateSidebarBubbles();
             populateReviewSummary();
         }
@@ -820,7 +1089,8 @@ const mlFrameworks = [
                 1: sectionStatuses.sec1,
                 2: sectionStatuses.sec2,
                 3: sectionStatuses.sec3,
-                4: (sectionStatuses.sec1 === 'complete' && sectionStatuses.sec2 === 'complete' && sectionStatuses.sec3 === 'complete') ? 'complete' : 'incomplete'
+                4: sectionStatuses.sec4,
+                5: (sectionStatuses.sec1 === 'complete' && sectionStatuses.sec2 === 'complete' && sectionStatuses.sec3 === 'complete') ? 'complete' : 'incomplete'
             };
 
             document.querySelectorAll('.sidebar-step-btn').forEach(btn => {
@@ -844,7 +1114,11 @@ const mlFrameworks = [
 
                 const subText = btn.querySelector('.step-status-subtext');
                 if (subText) {
-                    subText.textContent = status === 'complete' ? 'Complete' : status === 'incomplete' ? 'In Progress' : 'Not Started';
+                    if (s === 4) {
+                        subText.textContent = status === 'complete' ? 'Complete' : status === 'incomplete' ? 'In Progress' : 'Optional';
+                    } else {
+                        subText.textContent = status === 'complete' ? 'Complete' : status === 'incomplete' ? 'In Progress' : 'Not Started';
+                    }
                 }
 
                 if (s === currentStep) {
@@ -902,6 +1176,107 @@ const mlFrameworks = [
 
             document.getElementById('rev-essay2-status').textContent = e2 ? `Provided (${w2} words)` : 'Empty';
             document.getElementById('rev-essay2-preview').textContent = e2 ? `"${e2.slice(0, 150)}..."` : 'No text entered.';
+
+            // Section 4: Python practice preview (only when something was filled out)
+            const pySection = document.getElementById('rev-python-section');
+            const pyExp = document.querySelector('input[name="python_experience"]:checked')?.value
+                || window.DRAFT_PYTHON_EXPERIENCE
+                || null;
+            const pyAssess = (typeof testPythonAssessment !== 'undefined' && testPythonAssessment)
+                || window.DRAFT_PYTHON_ASSESSMENT
+                || null;
+            const colabLink = document.getElementById('colab_link')?.value?.trim() || '';
+
+            // Prefer live textarea answers if the workspace is still on the page
+            const liveAnswers = Array.from(document.querySelectorAll('.python-answer-input')).map((el) => ({
+                id: el.getAttribute('data-question-id'),
+                answer: (el.value || '').trim(),
+            }));
+            const questions = (pyAssess?.questions || []).map((q) => {
+                const live = liveAnswers.find((a) => a.id === q.id);
+                return {
+                    ...q,
+                    answer: (live?.answer !== undefined && live.answer !== '') ? live.answer : (q.answer || ''),
+                };
+            });
+            const hasAnswers = questions.some((q) => (q.answer || '').trim());
+            const hasPythonContent = Boolean(pyExp || pyAssess || colabLink || hasAnswers);
+
+            if (pySection) {
+                if (!hasPythonContent) {
+                    pySection.style.display = 'none';
+                } else {
+                    pySection.style.display = 'block';
+
+                    const expEl = document.getElementById('rev-python-exp');
+                    const expRow = document.getElementById('rev-python-exp-row');
+                    if (pyExp) {
+                        if (expRow) expRow.style.display = '';
+                        if (expEl) expEl.textContent = pyExp === 'yes' ? 'Yes' : 'No';
+                    } else if (expRow) {
+                        expRow.style.display = 'none';
+                    }
+
+                    const statusEl = document.getElementById('rev-python-status');
+                    const statusRow = document.getElementById('rev-python-status-row');
+                    const statusLabels = {
+                        not_started: 'Not started',
+                        in_progress: 'In progress',
+                        completed: 'Submitted',
+                        skipped: 'Skipped',
+                        expired: 'Time expired',
+                    };
+                    if (pyAssess?.status) {
+                        if (statusRow) statusRow.style.display = '';
+                        if (statusEl) statusEl.textContent = statusLabels[pyAssess.status] || pyAssess.status;
+                    } else if (pyExp === 'no') {
+                        if (statusRow) statusRow.style.display = '';
+                        if (statusEl) statusEl.textContent = 'Locked (no Python experience)';
+                    } else if (statusRow) {
+                        statusRow.style.display = 'none';
+                    }
+
+                    const colabLinkEl = document.getElementById('rev-colab-link');
+                    const colabNoneEl = document.getElementById('rev-colab-none');
+                    if (colabLink) {
+                        if (colabLinkEl) {
+                            colabLinkEl.href = colabLink;
+                            colabLinkEl.textContent = colabLink;
+                            colabLinkEl.style.display = '';
+                        }
+                        if (colabNoneEl) colabNoneEl.textContent = '';
+                    } else {
+                        if (colabLinkEl) {
+                            colabLinkEl.removeAttribute('href');
+                            colabLinkEl.textContent = '';
+                            colabLinkEl.style.display = 'none';
+                        }
+                        if (colabNoneEl) colabNoneEl.textContent = 'None provided';
+                    }
+
+                    const answersEl = document.getElementById('rev-python-answers');
+                    if (answersEl) {
+                        if (hasAnswers || (pyAssess?.status === 'completed' || pyAssess?.status === 'expired') && questions.length) {
+                            answersEl.style.display = 'flex';
+                            answersEl.innerHTML = questions.map((q, idx) => {
+                                const ans = (q.answer || '').trim();
+                                const preview = ans
+                                    ? (ans.length > 200 ? `"${ans.slice(0, 200)}…"` : `"${ans}"`)
+                                    : 'No answer entered.';
+                                return `
+                                    <div style="padding-top: 0.5rem; border-top: 1px solid var(--slate-200);">
+                                        <strong>Q${idx + 1}</strong>
+                                        <p style="font-style: italic; color: var(--slate-600); margin: 0.25rem 0 0; font-size: 0.825rem; max-height: 72px; overflow: hidden; white-space: pre-wrap;">${escapeHtml(preview)}</p>
+                                    </div>
+                                `;
+                            }).join('');
+                        } else {
+                            answersEl.style.display = 'none';
+                            answersEl.innerHTML = '';
+                        }
+                    }
+                }
+            }
         }
 
         function showStep(stepNum) {
@@ -1029,6 +1404,15 @@ const mlFrameworks = [
             statusDiv.textContent = 'Saving draft...';
 
             try {
+                if (window.IS_TEST_MODE) {
+                    await new Promise((r) => setTimeout(r, 250));
+                    statusDiv.style.color = 'var(--success-green)';
+                    statusDiv.textContent = '✓ Section Draft Saved (test mode — not persisted)';
+                    evaluateClientSectionStatuses();
+                    setTimeout(() => { statusDiv.textContent = ''; }, 3000);
+                    return;
+                }
+
                 const form = document.getElementById('application-form');
                 const formData = new FormData(form);
 
@@ -1057,6 +1441,431 @@ const mlFrameworks = [
             btn.addEventListener('click', saveSectionDraft);
         });
 
+        document.getElementById('application-form')?.addEventListener('submit', (e) => {
+            if (!window.IS_TEST_MODE) return;
+            e.preventDefault();
+            const status = document.getElementById('test-submit-status');
+            if (status) {
+                status.style.color = 'var(--success-green)';
+                status.textContent = '✓ Test submission succeeded — nothing was written to the database.';
+            }
+        });
+
+        // --- Optional Python skill assessment (two timed debugging questions) ---
+        let pythonTimerId = null;
+        let pythonExpiresAt = null;
+        let pythonTimedOut = false;
+
+        const TEST_PYTHON_BANK = [
+            {
+                id: 'off-by-one',
+                title: 'Off-by-one in a loop',
+                code: `def sum_first_n(numbers, n):
+    total = 0
+    for i in range(n):
+        total += numbers[i]
+    return total
+
+print(sum_first_n([1, 2, 3], 5))`,
+                prompt: 'What breaks, and why?',
+            },
+            {
+                id: 'modify-while-iterating',
+                title: 'Modifying a list while iterating over it',
+                code: `nums = [1, 2, 3, 4, 5]
+for n in nums:
+    if n % 2 == 0:
+        nums.remove(n)
+print(nums)`,
+                prompt: "What's the actual output (it's surprising), and why does this happen?",
+            },
+            {
+                id: 'immutable-string-method',
+                title: "Function that doesn't do what it looks like it does",
+                code: `def shout(word):
+    word.upper()
+    return word
+
+print(shout("hello"))`,
+                prompt: "What prints? Why doesn't this behave the way it looks like it should?",
+            },
+            {
+                id: 'accumulator-reset',
+                title: 'Accumulator reset inside the loop',
+                code: `def total_sales(sales):
+    for amount in sales:
+        total = 0
+        total += amount
+    return total
+
+print(total_sales([100, 250, 75]))`,
+                prompt: 'What does this return, and why is it wrong?',
+            },
+            {
+                id: 'infinite-loop',
+                title: 'Infinite loop',
+                code: `def countdown(n):
+    while n > 0:
+        print(n)
+    return "Done"`,
+                prompt: 'What happens when you run this?',
+            },
+            {
+                id: 'loop-bound-skip',
+                title: 'Loop bound skips an element',
+                code: `def print_all(items):
+    for i in range(len(items) - 1):
+        print(items[i])
+
+print_all(["a", "b", "c"])`,
+                prompt: "What's printed, and what's missing?",
+            },
+            {
+                id: 'early-return',
+                title: 'Early return inside a loop',
+                code: `def contains_negative(numbers):
+    for n in numbers:
+        if n < 0:
+            return True
+        else:
+            return False
+    return False
+
+print(contains_negative([5, 3, -2, 8]))`,
+                prompt: 'What does this return? Why is it wrong even though `-2` is in the list?',
+            },
+            {
+                id: 'wrong-logical-op',
+                title: 'Wrong logical operator',
+                code: `def is_child_or_senior(age):
+    if age < 12 and age > 65:
+        return True
+    return False
+
+print(is_child_or_senior(8))
+print(is_child_or_senior(70))`,
+                prompt: 'What does this return for both calls? What\'s the logic error?',
+            },
+        ];
+
+        function pickTestPythonQuestions() {
+            const shuffled = [...TEST_PYTHON_BANK].sort(() => Math.random() - 0.5);
+            return shuffled.slice(0, 2).map((q) => ({ ...q }));
+        }
+
+        function formatPythonTimer(seconds) {
+            const m = Math.floor(Math.max(0, seconds) / 60);
+            const s = Math.max(0, seconds) % 60;
+            return `${m}:${String(s).padStart(2, '0')}`;
+        }
+
+        function setPythonStatus(msg) {
+            const el = document.getElementById('python-test-status');
+            if (el) el.textContent = msg || '';
+        }
+
+        function syncPythonGateVisibility() {
+            const prog = document.getElementById('programming_experience')?.value;
+            const gate = document.getElementById('python-assessment-gate');
+            const offer = document.getElementById('python-test-offer');
+            const notApplicable = document.getElementById('python-assessment-not-applicable');
+            const colabSection = document.getElementById('python-colab-section');
+            const blocked = document.getElementById('python-experience-blocked');
+            if (!gate) return;
+
+            const show = prog === 'intermediate' || prog === 'advanced';
+            gate.style.display = show ? 'block' : 'none';
+            if (notApplicable) notApplicable.style.display = show ? 'none' : 'block';
+
+            if (!show) {
+                if (offer) offer.style.display = 'none';
+                if (blocked) blocked.style.display = 'none';
+                if (colabSection) colabSection.style.display = 'block';
+                return;
+            }
+
+            const pyYes = document.getElementById('python_experience_yes')?.checked;
+            const pyNo = document.getElementById('python_experience_no')?.checked;
+            if (offer) offer.style.display = pyYes ? 'block' : 'none';
+            if (blocked) blocked.style.display = pyNo ? 'block' : 'none';
+            // Yes unlocks Colab; No (or unanswered) locks the rest of the section
+            if (colabSection) colabSection.style.display = pyYes ? 'block' : 'none';
+        }
+
+        function stopPythonTimer() {
+            if (pythonTimerId) {
+                clearInterval(pythonTimerId);
+                pythonTimerId = null;
+            }
+        }
+
+        function setPythonAnswersReadOnly(readOnly) {
+            document.querySelectorAll('.python-answer-input').forEach((el) => {
+                el.readOnly = Boolean(readOnly);
+            });
+            const submitBtn = document.getElementById('python-submit-answers-btn');
+            if (submitBtn) submitBtn.disabled = Boolean(readOnly);
+        }
+
+        function startPythonTimer(startedAtIso, timeLimitSeconds) {
+            stopPythonTimer();
+            const startedMs = startedAtIso ? new Date(startedAtIso).getTime() : Date.now();
+            const limit = (timeLimitSeconds || 600) * 1000;
+            pythonExpiresAt = startedMs + limit;
+            pythonTimedOut = false;
+
+            const tick = () => {
+                const remaining = Math.ceil((pythonExpiresAt - Date.now()) / 1000);
+                const timerEl = document.getElementById('python-timer');
+                if (timerEl) timerEl.textContent = formatPythonTimer(remaining);
+
+                if (remaining <= 0) {
+                    pythonTimedOut = true;
+                    stopPythonTimer();
+                    if (timerEl) timerEl.textContent = '0:00';
+                    setPythonStatus('Time is up. You can still submit the answers you have.');
+                }
+            };
+
+            tick();
+            pythonTimerId = setInterval(tick, 1000);
+        }
+
+        function escapeHtml(str) {
+            return String(str || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function renderPythonQuestions(questions, readOnly) {
+            const container = document.getElementById('python-questions-container');
+            if (!container) return;
+
+            container.innerHTML = (questions || []).map((q, idx) => `
+                <div class="python-question-block" data-question-id="${escapeHtml(q.id)}" style="margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid var(--slate-200);">
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--slate-900); margin-bottom: 0.5rem;">
+                        Question ${idx + 1}
+                    </div>
+                    <pre style="background: #0F172A; color: #E2E8F0; padding: 0.85rem; border-radius: var(--radius-sm); font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; margin: 0 0 0.65rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">${escapeHtml(q.code)}</pre>
+                    <p style="font-size: 0.9rem; color: var(--slate-800); line-height: 1.5; margin-bottom: 0.5rem; font-weight: 600;">
+                        ${escapeHtml(q.prompt)}
+                    </p>
+                    <label class="form-label" for="python-answer-${escapeHtml(q.id)}">Your answer</label>
+                    <textarea
+                        id="python-answer-${escapeHtml(q.id)}"
+                        class="textarea-field python-answer-input"
+                        data-question-id="${escapeHtml(q.id)}"
+                        rows="4"
+                        maxlength="3000"
+                        placeholder="Explain what happens and why…"
+                        ${readOnly ? 'readonly' : ''}
+                    ></textarea>
+                </div>
+            `).join('');
+
+            (questions || []).forEach((q) => {
+                const el = document.getElementById(`python-answer-${q.id}`);
+                if (el) el.value = q.answer || '';
+            });
+        }
+
+        function collectPythonAnswers() {
+            return Array.from(document.querySelectorAll('.python-answer-input')).map((el) => ({
+                id: el.getAttribute('data-question-id'),
+                answer: el.value || '',
+            }));
+        }
+
+        function showPythonWorkspace(assessment, readOnly) {
+            const workspace = document.getElementById('python-test-workspace');
+            const actions = document.getElementById('python-test-actions');
+            const offer = document.getElementById('python-test-offer');
+            if (offer) offer.style.display = 'block';
+            if (workspace) workspace.style.display = 'block';
+
+            const done = assessment.status === 'completed' || assessment.status === 'expired' || assessment.status === 'skipped';
+            const hideStart = done || readOnly;
+            if (actions) actions.style.display = hideStart ? 'none' : 'flex';
+
+            const locked = Boolean(readOnly) || assessment.status === 'completed' || assessment.status === 'expired';
+            renderPythonQuestions(assessment.questions || [], locked);
+            setPythonAnswersReadOnly(locked);
+
+            if (assessment.status === 'in_progress' && assessment.started_at && !locked) {
+                startPythonTimer(assessment.started_at, assessment.time_limit_seconds || 600);
+            } else {
+                stopPythonTimer();
+                const timerEl = document.getElementById('python-timer');
+                if (timerEl && (assessment.status === 'completed' || assessment.status === 'expired')) {
+                    timerEl.textContent = assessment.status === 'expired' ? 'Expired' : 'Done';
+                }
+            }
+        }
+
+        async function startPythonAssessment() {
+            const startBtn = document.getElementById('python-test-start-btn');
+            if (startBtn) startBtn.disabled = true;
+            setPythonStatus('Starting exercise…');
+            try {
+                if (window.IS_TEST_MODE) {
+                    testPythonAssessment = {
+                        status: 'in_progress',
+                        questions: pickTestPythonQuestions(),
+                        started_at: new Date().toISOString(),
+                        time_limit_seconds: 600,
+                    };
+                    showPythonWorkspace(testPythonAssessment, false);
+                    setPythonStatus('Answer both questions, then submit. (test mode — not persisted)');
+                    evaluateClientSectionStatuses();
+                    return;
+                }
+
+                const res = await fetch('/api/python-assessment/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'start', pythonExperience: 'yes' })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to start assessment');
+                window.DRAFT_PYTHON_ASSESSMENT = data.assessment;
+                showPythonWorkspace(data.assessment, false);
+                setPythonStatus('Answer both questions, then submit.');
+                evaluateClientSectionStatuses();
+            } catch (err) {
+                console.error(err);
+                setPythonStatus(err.message || 'Could not start the exercise.');
+                if (startBtn) startBtn.disabled = false;
+            }
+        }
+
+        async function skipPythonAssessment() {
+            setPythonStatus('Skipping…');
+            try {
+                if (window.IS_TEST_MODE) {
+                    testPythonAssessment = { status: 'skipped' };
+                    document.getElementById('python-test-workspace').style.display = 'none';
+                    document.getElementById('python-test-actions').style.display = 'none';
+                    stopPythonTimer();
+                    setPythonStatus('Python exercise skipped (test mode — not persisted).');
+                    evaluateClientSectionStatuses();
+                    return;
+                }
+
+                const res = await fetch('/api/python-assessment/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'skip', pythonExperience: 'yes' })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to skip');
+                window.DRAFT_PYTHON_ASSESSMENT = data.assessment || { status: 'skipped' };
+                document.getElementById('python-test-workspace').style.display = 'none';
+                document.getElementById('python-test-actions').style.display = 'none';
+                stopPythonTimer();
+                setPythonStatus('Python exercise skipped. You can continue your application.');
+                evaluateClientSectionStatuses();
+            } catch (err) {
+                console.error(err);
+                setPythonStatus(err.message || 'Could not skip.');
+            }
+        }
+
+        async function submitPythonAnswers() {
+            const submitBtn = document.getElementById('python-submit-answers-btn');
+            const answers = collectPythonAnswers();
+            const allFilled = answers.length > 0 && answers.every((a) => a.answer.trim());
+            if (!allFilled && !pythonTimedOut) {
+                setPythonStatus('Please answer every question before submitting.');
+                return;
+            }
+
+            if (submitBtn) submitBtn.disabled = true;
+            setPythonStatus('Submitting answers…');
+            try {
+                if (window.IS_TEST_MODE) {
+                    stopPythonTimer();
+                    setPythonAnswersReadOnly(true);
+                    if (testPythonAssessment) {
+                        testPythonAssessment.status = pythonTimedOut ? 'expired' : 'completed';
+                        testPythonAssessment.questions = (testPythonAssessment.questions || []).map((q) => {
+                            const found = answers.find((a) => a.id === q.id);
+                            return { ...q, answer: found ? found.answer : '' };
+                        });
+                        testPythonAssessment.submitted_at = new Date().toISOString();
+                    }
+                    setPythonStatus('Python assessment complete (test mode — not persisted).');
+                    const timerEl = document.getElementById('python-timer');
+                    if (timerEl) timerEl.textContent = pythonTimedOut ? 'Expired' : 'Done';
+                    evaluateClientSectionStatuses();
+                    return;
+                }
+
+                const res = await fetch('/api/python-assessment/submit-answers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answers, expired: pythonTimedOut })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to submit answers');
+
+                stopPythonTimer();
+                setPythonAnswersReadOnly(true);
+                window.DRAFT_PYTHON_ASSESSMENT = data.assessment || window.DRAFT_PYTHON_ASSESSMENT;
+                if (window.DRAFT_PYTHON_ASSESSMENT) {
+                    window.DRAFT_PYTHON_ASSESSMENT.status = pythonTimedOut ? 'expired' : 'completed';
+                }
+                setPythonStatus('Python assessment complete. Thank you!');
+                const timerEl = document.getElementById('python-timer');
+                if (timerEl) timerEl.textContent = pythonTimedOut ? 'Expired' : 'Done';
+                evaluateClientSectionStatuses();
+            } catch (err) {
+                console.error(err);
+                setPythonStatus(err.message || 'Submit failed.');
+                if (submitBtn) submitBtn.disabled = false;
+            }
+        }
+
+        function initPythonAssessmentUI() {
+            const progSelect = document.getElementById('programming_experience');
+            progSelect?.addEventListener('change', syncPythonGateVisibility);
+
+            document.querySelectorAll('input[name="python_experience"]').forEach((radio) => {
+                radio.addEventListener('change', syncPythonGateVisibility);
+            });
+
+            document.getElementById('python-test-start-btn')?.addEventListener('click', startPythonAssessment);
+            document.getElementById('python-test-skip-btn')?.addEventListener('click', skipPythonAssessment);
+            document.getElementById('python-submit-answers-btn')?.addEventListener('click', submitPythonAnswers);
+
+            syncPythonGateVisibility();
+
+            const existing = window.DRAFT_PYTHON_ASSESSMENT;
+            if (existing && (existing.status === 'in_progress' || existing.status === 'completed' || existing.status === 'expired')) {
+                // Legacy coding assessments won't have questions[]; skip resume if so
+                if (!existing.questions?.length) {
+                    setPythonStatus('A previous coding exercise was started under an older format and cannot be resumed. You can skip or continue the rest of your application.');
+                    return;
+                }
+                const yesRadio = document.getElementById('python_experience_yes');
+                if (yesRadio) yesRadio.checked = true;
+                syncPythonGateVisibility();
+                showPythonWorkspace(existing, existing.status === 'completed' || existing.status === 'expired');
+                if (existing.status === 'completed' || existing.status === 'expired') {
+                    setPythonStatus('Previous Python assessment loaded.');
+                } else {
+                    setPythonStatus('Continuing your in-progress Python exercise.');
+                }
+            } else if (existing && existing.status === 'skipped') {
+                const yesRadio = document.getElementById('python_experience_yes');
+                if (yesRadio) yesRadio.checked = true;
+                syncPythonGateVisibility();
+                document.getElementById('python-test-actions').style.display = 'none';
+                setPythonStatus('Python exercise previously skipped.');
+            }
+        }
+
         // Add real-time input listeners to all form fields
         document.querySelectorAll('input, select, textarea').forEach(input => {
             input.addEventListener('change', evaluateClientSectionStatuses);
@@ -1071,6 +1880,7 @@ const mlFrameworks = [
             updateLocationDetail();
             handleExclusiveCheckboxes('lang-checkbox');
             handleExclusiveCheckboxes('ml-checkbox');
+            initPythonAssessmentUI();
 
             ['essay_one', 'essay_two'].forEach((id, idx) => {
                 const charId = idx === 0 ? 'essay-one-chars' : 'essay-two-chars';
