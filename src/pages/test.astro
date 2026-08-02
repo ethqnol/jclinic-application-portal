@@ -1,0 +1,14 @@
+---
+import { isDevTestEnabled } from "../lib/dev-test";
+
+/**
+ * Local-only application form preview.
+ * No Google sign-in, no database writes. Stripped from production builds.
+ */
+if (!isDevTestEnabled()) {
+  return new Response(null, { status: 404, statusText: "Not Found" });
+}
+
+Astro.locals.isDevTest = true;
+return Astro.rewrite("/application?dev_test=1");
+---

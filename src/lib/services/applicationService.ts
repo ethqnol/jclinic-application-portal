@@ -22,6 +22,8 @@ export interface ApplicationPayload {
   needsFinancialAid?: string;
   clubsActivities?: string;
   finalThoughts?: string;
+  pythonExperience?: string;
+  colabLink?: string;
   currentStep?: number;
   deviceFp?: string;
 }
@@ -75,6 +77,8 @@ export class ApplicationService {
       needs_financial_aid: payload.needsFinancialAid !== undefined ? payload.needsFinancialAid : existingExp.needs_financial_aid || null,
       clubs_activities: payload.clubsActivities !== undefined ? payload.clubsActivities : existingExp.clubs_activities || null,
       final_thoughts: payload.finalThoughts !== undefined ? payload.finalThoughts : existingExp.final_thoughts || null,
+      python_experience: payload.pythonExperience !== undefined ? payload.pythonExperience : existingExp.python_experience || null,
+      colab_link: payload.colabLink !== undefined ? payload.colabLink : existingExp.colab_link || null,
       student_location: payload.studentLocation !== undefined ? payload.studentLocation : existingExp.student_location || null,
       location_detail: payload.locationDetail !== undefined ? payload.locationDetail : existingExp.location_detail || null,
       current_step: payload.currentStep !== undefined ? payload.currentStep : existingExp.current_step || 1,
@@ -153,8 +157,10 @@ export class ApplicationService {
       grade_level: payload.gradeLevel,
       clubs_activities: payload.clubsActivities,
       final_thoughts: payload.finalThoughts,
+      python_experience: payload.pythonExperience !== undefined ? payload.pythonExperience : existingExp.python_experience || null,
+      colab_link: payload.colabLink !== undefined ? payload.colabLink : existingExp.colab_link || null,
       location_detail: payload.locationDetail || null,
-      current_step: 4
+      current_step: 5
     });
 
     const needsFinancialAidBool = payload.needsFinancialAid === 'yes';

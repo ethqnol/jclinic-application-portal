@@ -17,11 +17,12 @@ export interface SectionStatus {
   sec1: 'complete' | 'incomplete' | 'not_started';
   sec2: 'complete' | 'incomplete' | 'not_started';
   sec3: 'complete' | 'incomplete' | 'not_started';
+  sec4: 'complete' | 'incomplete' | 'not_started';
 }
 
 export function calculateDraftSectionStatuses(user: any, application: any): SectionStatus {
   if (!application) {
-    return { sec1: 'not_started', sec2: 'not_started', sec3: 'not_started' };
+    return { sec1: 'not_started', sec2: 'not_started', sec3: 'not_started', sec4: 'not_started' };
   }
 
   let exp: any = {};
@@ -80,5 +81,25 @@ export function calculateDraftSectionStatuses(user: any, application: any): Sect
     sec3Status = 'incomplete';
   }
 
-  return { sec1: sec1Status, sec2: sec2Status, sec3: sec3Status };
+  // Section 4: optional — if started, finish Colab link + every timed question (or skip timed)
+  const pyAssessment = exp?.python_assessment;
+  const pyStatus = pyAssessment?.status;
+  const colabLink = (exp?.colab_link || '').trim();
+  const pyQuestions = pyAssessment?.questions || [];
+  const allQuestionsAnswered =
+    pyQuestions.length > 0 &&
+    pyQuestions.every((q: any) => String(q?.answer || '').trim().length > 0);
+  const timedDone = pyStatus === 'completed' || pyStatus === 'expired';
+  const timedOk = pyStatus === 'skipped' || (timedDone && allQuestionsAnswered);
+
+  let sec4Status: 'complete' | 'incomplete' | 'not_started' = 'not_started';
+  if (!pyStatus && !colabLink) {
+    sec4Status = 'not_started';
+  } else if (pyStatus === 'skipped' && !colabLink) {
+    sec4Status = 'complete';
+  } else {
+    sec4Status = colabLink && timedOk ? 'complete' : 'incomplete';
+  }
+
+  return { sec1: sec1Status, sec2: sec2Status, sec3: sec3Status, sec4: sec4Status };
 }
