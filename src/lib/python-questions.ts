@@ -63,16 +63,6 @@ print(total_sales([100, 250, 75]))`,
     prompt: 'What happens when you run this?',
   },
   {
-    id: 'loop-bound-skip',
-    title: 'Loop bound skips an element',
-    code: `def print_all(items):
-    for i in range(len(items) - 1):
-        print(items[i])
-
-print_all(["a", "b", "c"])`,
-    prompt: "What's printed, and what's missing?",
-  },
-  {
     id: 'early-return',
     title: 'Early return inside a loop',
     code: `def contains_negative(numbers):
